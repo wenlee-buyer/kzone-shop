@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>商品詳情｜K.Zone 日韓代購</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<style>
+.detail-imgs { display: flex; gap: 8px; padding: 12px 16px; overflow-x: auto; }
+.detail-imgs::-webkit-scrollbar { display: none; }
+.dimg-main { width: 240px; height: 240px; flex-shrink: 0; background: var(--c-cream); border-radius: 12px; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 0.5px solid var(--c-blush); cursor: pointer; }
+.dimg-main img { width: 100%; height: 100%; object-fit: cover; }
+.dimg-thumb { width: 70px; height: 70px; flex-shrink: 0; background: var(--c-blush); border-radius: 8px; border: 1.5px solid transparent; overflow: hidden; cursor: pointer; }
+.dimg-thumb.active { border-color: var(--c-orange); }
+.dimg-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.detail-info { padding: 4px 16px 100px; }
+.dtitle { font-size: 19px; font-weight: 700; color: var(--c-coffee); line-height: 1.4; }
+.dbadges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.dbadge { font-size: 11px; background: var(--c-cream); color: var(--c-coffee); padding: 4px 10px; border-radius: 8px; border: 0.5px solid var(--c-sand); font-weight: 500; }
+.dprice { font-size: 23px; font-weight: 700; color: var(--c-orange); margin-top: 12px; }
+.drec { background: var(--c-cream); border-radius: 10px; padding: 12px 14px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); line-height: 1.7; border-left: 3px solid var(--c-orange); white-space: pre-line; }
+.style-label { font-size: 13px; font-weight: 700; color: var(--c-coffee); margin: 18px 0 8px; }
+.style-opts { display: flex; gap: 8px; flex-wrap: wrap; }
+.sopt { padding: 8px 14px; border-radius: 8px; border: 0.5px solid var(--c-rose); font-size: 13px; color: var(--c-rose-text); cursor: pointer; background: #fff; }
+.sopt.active { background: var(--c-coffee); color: #fff; border-color: var(--c-coffee); }
+.qty-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.qty-label { font-size: 13px; color: var(--c-coffee); font-weight: 700; }
+.qty-ctrl { display: flex; align-items: center; gap: 12px; }
+.qbtn { width: 32px; height: 32px; border-radius: 50%; border: 0.5px solid var(--c-rose); background: #fff; font-size: 17px; color: var(--c-coffee); display: flex; align-items: center; justify-content: center; }
+.qnum { font-size: 15px; font-weight: 700; color: var(--c-coffee); min-width: 22px; text-align: center; }
+.stock-note { background: #fff8f5; border: 0.5px solid var(--c-orange); border-radius: 10px; padding: 11px 13px; margin-top: 14px; font-size: 11px; color: var(--c-rose-text); line-height: 1.7; white-space: pre-line; }
+.sticky-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: var(--c-bg); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 0.5px solid var(--c-blush); z-index: 60; }
+.sticky-bottom .container { max-width: 480px; margin: 0 auto; }
+@media (min-width: 1024px) {
+  .detail-imgs { padding: 16px 24px; }
+  .detail-info { padding: 4px 24px 100px; max-width: 700px; }
+  .dimg-main { width: 340px; height: 340px; }
+  .sticky-bottom .container { max-width: 700px; margin: 0 auto; }
+}
+</style>
+</head>
+<body>
+
+<div class="navbar">
+  <div class="container">
+    <button class="nav-icon-btn" onclick="history.back()" aria-label="返回" style="font-size:19px">
+      <i class="ti ti-arrow-left"></i>
+    </button>
+    <div class="logo-wrap"><div class="logo-title" style="font-size:15px">商品詳情</div></div>
+    <a href="cart.html" class="nav-icon-btn" aria-label="購物車">
+      <i class="ti ti-shopping-cart"></i>
+      <span class="cart-badge" style="display:none">0</span>
+    </a>
+  </div>
+</div>
+
+<div id="content">
+  <div class="loading-wrap"><div class="spin"></div>載入商品資料中...</div>
+</div>
+
+<div class="sticky-bottom" id="bottomBar" style="display:none">
+  <div class="container">
+    <button class="btn-primary" id="addCartBtn" style="display:flex; align-items:center; justify-content:center; gap:8px">
+      <i class="ti ti-shopping-cart-plus"></i> 加入購物車
+    </button>
+  </div>
+</div>
+
+<script src="firebase-config.js"></script>
+<script src="assets/illustrations.js"></script>
+<script src="assets/common.js"></script>
+<script>
+let product = null;
+let settings = {};
+let categories = [];
+let tags = [];
+let selectedStyle = null;
+let qty = 1;
+let currentImgIndex = 0;
+
+function getProductId() {
+  const params = new URLSearchParams(location.search);
+  return params.get('id');
+}
+
+async function init() {
+  refreshCartBadge();
+  const id = getProductId();
+  if (!id) {
+    document.getElementById('content').innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>找不到商品</div>`;
+    return;
+  }
+
+  const [settingsData, catSnap, tagSnap, prodDoc] = await Promise.all([
+    getSettings(),
+    db.collection(COL.CATEGORIES).get(),
+    db.collection(COL.TAGS).get(),
+    db.collection(COL.PRODUCTS).doc(id).get()
+  ]);
+
+  settings = settingsData;
+  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  if (!prodDoc.exists) {
+    document.getElementById('content').innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>找不到此商品，可能已被下架</div>`;
+    return;
+  }
+
+  product = { id: prodDoc.id, ...prodDoc.data() };
+  render();
+}
+
+function render() {
+  const cat = categories.find(c => c.id === product.categoryId);
+  const productTags = (product.tagIds || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean);
+  const images = product.images && product.images.length > 0 ? product.images : [];
+  const stockBadgeText = product.stockType === 'preorder' ? '預購' : '現貨';
+
+  let imgsHtml = '';
+  if (images.length > 0) {
+    imgsHtml = `
+      <div class="detail-imgs" id="imgStrip">
+        <div class="dimg-main" id="mainImgWrap">
+          <img src="${images[0]}" id="mainImg" alt="${escapeHtml(product.name)}">
+        </div>
+        ${images.map((img, i) => `<div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})"><img src="${img}" alt="商品圖${i+1}"></div>`).join('')}
+      </div>
+    `;
+  } else {
+    imgsHtml = `<div class="detail-imgs"><div class="dimg-main"><i class="ti ti-photo" style="font-size:48px;color:var(--c-sand)"></i></div></div>`;
+  }
+
+  let stylesHtml = '';
+  if (product.styles && product.styles.length > 0) {
+    stylesHtml = `
+      <div class="style-label">選擇款式</div>
+      <div class="style-opts" id="styleOpts">
+        ${product.styles.map((s, i) => `<div class="sopt ${i===0?'active':''}" data-style="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join('')}
+      </div>
+    `;
+    selectedStyle = product.styles[0];
+  }
+
+  document.getElementById('content').innerHTML = `
+    ${imgsHtml}
+    <div class="detail-info">
+      <div class="dtitle">${escapeHtml(product.name)}</div>
+      <div class="dbadges">
+        <span class="dbadge">${stockBadgeText}</span>
+        ${cat ? `<span class="dbadge">${escapeHtml(cat.name)}</span>` : ''}
+        ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
+      </div>
+      <div class="dprice">${formatPrice(product.price)}</div>
+      ${product.recommendation ? `<div class="drec">✨ 小編推薦：${escapeHtml(product.recommendation)}</div>` : ''}
+      ${stylesHtml}
+      <div class="qty-row">
+        <span class="qty-label">數量</span>
+        <div class="qty-ctrl">
+          <button class="qbtn" id="qtyMinus" aria-label="減少數量">−</button>
+          <span class="qnum" id="qtyNum">1</span>
+          <button class="qbtn" id="qtyPlus" aria-label="增加數量">+</button>
+        </div>
+      </div>
+      <div class="stock-note">現貨數量變化大，此為預估數量。現貨數量是否足夠，須以訂購數量回傳官方帳號後，官方確認回覆後為主。</div>
+    </div>
+  `;
+
+  document.title = `${product.name}｜${settings.siteName}`;
+  document.getElementById('bottomBar').style.display = 'block';
+
+  document.getElementById('qtyMinus').addEventListener('click', () => {
+    qty = Math.max(1, qty - 1);
+    document.getElementById('qtyNum').textContent = qty;
+  });
+  document.getElementById('qtyPlus').addEventListener('click', () => {
+    qty += 1;
+    document.getElementById('qtyNum').textContent = qty;
+  });
+
+  const styleOptsEl = document.getElementById('styleOpts');
+  if (styleOptsEl) {
+    styleOptsEl.querySelectorAll('.sopt').forEach(el => {
+      el.addEventListener('click', () => {
+        styleOptsEl.querySelectorAll('.sopt').forEach(o => o.classList.remove('active'));
+        el.classList.add('active');
+        selectedStyle = el.dataset.style;
+      });
+    });
+  }
+
+  document.getElementById('addCartBtn').addEventListener('click', handleAddToCart);
+}
+
+function switchImg(idx) {
+  const images = product.images;
+  document.getElementById('mainImg').src = images[idx];
+  document.querySelectorAll('.dimg-thumb').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+}
+
+function handleAddToCart() {
+  const isFirstTime = !hasSeenFirstCartReminder();
+
+  if (isFirstTime) {
+    showFirstCartReminder(() => {
+      markFirstCartReminderSeen();
+      doAddToCart();
+    });
+  } else {
+    doAddToCart();
+  }
+}
+
+function doAddToCart() {
+  addToCart({
+    productId: product.id,
+    name: product.name,
+    price: product.price,
+    style: selectedStyle || '',
+    qty: qty,
+    image: (product.images && product.images[0]) || ''
+  });
+  refreshCartBadge();
+  showToast(`已加入購物車：${product.name} x${qty}`);
+}
+
+function showFirstCartReminder(onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">購買需知</span>
+        <button class="modal-close" id="closeReminderBtn" aria-label="關閉">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; line-height:1.9; color:var(--c-coffee); white-space:pre-line">${escapeHtml(settings.firstCartReminderText)}</p>
+        <button class="btn-primary" id="confirmReminderBtn" style="margin-top:18px">我了解了，繼續購物</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  document.getElementById('closeReminderBtn').addEventListener('click', close);
+  document.getElementById('confirmReminderBtn').addEventListener('click', () => {
+    close();
+    onConfirm();
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+init();
+</script>
+
+</body>
+</html>

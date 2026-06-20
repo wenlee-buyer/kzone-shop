@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K.Zone 日韓代購｜你的專屬楓谷周邊補給所</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+</head>
+<body>
+
+<div class="marquee-bar">
+  <span class="marquee-inner" id="marqueeText">載入中...</span>
+</div>
+
+<div class="navbar">
+  <div class="container">
+    <div style="width:40px"></div>
+    <div class="logo-wrap">
+      <div class="logo-title" id="siteName">K.Zone 日韓代購</div>
+      <div class="logo-sub" id="siteSubtitle">你的專屬楓谷周邊補給所</div>
+    </div>
+    <div class="nav-right">
+      <button class="nav-icon-btn" onclick="document.getElementById('searchBar').scrollIntoView({behavior:'smooth'})" aria-label="搜尋">
+        <i class="ti ti-search"></i>
+      </button>
+      <a href="cart.html" class="nav-icon-btn" aria-label="購物車">
+        <i class="ti ti-shopping-cart"></i>
+        <span class="cart-badge" style="display:none">0</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="src-nav">
+  <div class="container" id="srcNavList">
+    <button class="sn-item active" data-cat="all">全部</button>
+  </div>
+</div>
+
+<div class="hero">
+  <div class="container">
+    <div class="hero-txt">
+      <h1 id="heroTitle">楓谷限定
+韓國直送</h1>
+      <p id="heroSubtitle">最新周邊空運到台
+數量有限・先搶先贏！</p>
+      <button class="hero-btn" onclick="document.getElementById('productSection').scrollIntoView({behavior:'smooth'})">立即逛逛</button>
+    </div>
+    <div class="hero-art" id="heroArt"></div>
+  </div>
+</div>
+
+<div id="searchBar"></div>
+
+<div class="sec-label"><div class="container"><span>現貨 / 預購</span><div class="line"></div></div></div>
+<div class="stock-tabs">
+  <div class="container">
+    <button class="stab active" data-stock="instock">現貨</button>
+    <button class="stab" data-stock="preorder">預購</button>
+  </div>
+</div>
+
+<div class="sec-label"><div class="container"><span>角色篩選（可複選）</span><div class="line"></div></div></div>
+<div class="tag-bar">
+  <div class="container" id="tagFilterList"></div>
+</div>
+
+<div id="productSection">
+  <div class="sec-label"><div class="container"><span>所有商品</span><div class="line"></div></div></div>
+  <div class="product-grid" id="productGrid">
+    <div class="loading-wrap" style="grid-column:1/-1"><div class="spin"></div>載入商品中...</div>
+  </div>
+  <div class="more-row"><div class="container">
+    <button class="more-btn" onclick="location.href='products.html'">查看全部商品 <i class="ti ti-arrow-right"></i></button>
+  </div></div>
+</div>
+
+<div class="line-block">
+  <div class="container">
+    <div class="line-logo">LINE</div>
+    <div class="line-info">
+      <p>這邊找官方小編</p>
+      <span>下單・詢問・掌握最新補貨資訊</span>
+    </div>
+    <a class="line-arrow" id="lineOfficialBtn" href="#" target="_blank" aria-label="前往LINE官方帳號"><i class="ti ti-chevron-right"></i></a>
+  </div>
+</div>
+
+<div class="line-block" style="border-color:var(--c-rose)">
+  <div class="container">
+    <div class="line-logo" style="background:var(--c-coffee)"><i class="ti ti-users" style="font-size:18px"></i></div>
+    <div class="line-info">
+      <p id="communityTitle">楓之谷週邊補給站社群</p>
+      <span id="communityText">加入社群獲得第一手消息</span>
+    </div>
+    <a class="line-arrow" id="lineCommunityBtn" href="#" target="_blank" aria-label="加入LINE社群"><i class="ti ti-chevron-right"></i></a>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="logo-title">K.Zone 日韓代購</div>
+  <p>韓國空運直送・楓之谷周邊代購專門店</p>
+  <p style="margin-top:10px; opacity:0.6">© 2026 K.Zone Buying</p>
+</div>
+
+<a href="cart.html" class="cart-fab" aria-label="購物車">
+  <i class="ti ti-shopping-cart"></i>
+  <span class="cart-badge" style="display:none">0</span>
+</a>
+
+<script src="firebase-config.js"></script>
+<script src="assets/illustrations.js"></script>
+<script src="assets/common.js"></script>
+<script>
+let allProducts = [];
+let categories = [];
+let tags = [];
+let settings = {};
+let currentCatFilter = 'all';
+let currentStockFilter = 'instock';
+let activeTagFilters = new Set();
+
+async function init() {
+  await ensureDefaultData();
+  refreshCartBadge();
+
+  const [settingsData, catSnap, tagSnap] = await Promise.all([
+    getSettings(),
+    db.collection(COL.CATEGORIES).orderBy('order').get(),
+    db.collection(COL.TAGS).orderBy('order').get()
+  ]);
+
+  settings = settingsData;
+  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  applySettings();
+  renderCategoryNav();
+  renderTagFilters();
+  await loadProducts();
+}
+
+function applySettings() {
+  document.getElementById('marqueeText').textContent = settings.marqueeText;
+  document.getElementById('siteName').textContent = settings.siteName;
+  document.getElementById('siteSubtitle').textContent = settings.siteSubtitle;
+  document.getElementById('heroTitle').textContent = settings.heroTitle;
+  document.getElementById('heroSubtitle').textContent = settings.heroSubtitle;
+  document.title = `${settings.siteName}｜${settings.siteSubtitle}`;
+
+  const heroArt = document.getElementById('heroArt');
+  if (settings.heroImage) {
+    heroArt.innerHTML = `<img src="${settings.heroImage}" alt="主視覺">`;
+  } else {
+    heroArt.innerHTML = SVG_MUSHROOM_HERO;
+  }
+
+  document.getElementById('lineOfficialBtn').href = settings.lineOfficialUrl;
+  document.getElementById('lineCommunityBtn').href = settings.lineCommunityUrl;
+  document.getElementById('communityTitle').textContent = settings.lineCommunityTitle;
+  document.getElementById('communityText').textContent = settings.lineCommunityText;
+}
+
+function renderCategoryNav() {
+  const list = document.getElementById('srcNavList');
+  let html = `<button class="sn-item active" data-cat="all">全部</button>`;
+  categories.forEach(cat => {
+    html += `<button class="sn-item" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.sn-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      list.querySelectorAll('.sn-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentCatFilter = btn.dataset.cat;
+      filterAndRender();
+    });
+  });
+}
+
+function renderTagFilters() {
+  const list = document.getElementById('tagFilterList');
+  let html = `<button class="tg active" data-tag="all">全部</button>`;
+  tags.forEach(tag => {
+    html += `<button class="tg" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.tg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tagId = btn.dataset.tag;
+      if (tagId === 'all') {
+        activeTagFilters.clear();
+        list.querySelectorAll('.tg').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      } else {
+        list.querySelector('[data-tag="all"]').classList.remove('active');
+        if (activeTagFilters.has(tagId)) {
+          activeTagFilters.delete(tagId);
+          btn.classList.remove('active');
+        } else {
+          activeTagFilters.add(tagId);
+          btn.classList.add('active');
+        }
+        if (activeTagFilters.size === 0) {
+          list.querySelector('[data-tag="all"]').classList.add('active');
+        }
+      }
+      filterAndRender();
+    });
+  });
+
+  document.querySelectorAll('.stab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentStockFilter = btn.dataset.stock;
+      filterAndRender();
+    });
+  });
+}
+
+async function loadProducts() {
+  try {
+    const snap = await db.collection(COL.PRODUCTS)
+      .where('archived', '==', false)
+      .limit(60)
+      .get();
+    allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    filterAndRender();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('productGrid').innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="ti ti-alert-circle"></i>商品載入失敗，請稍後再試</div>`;
+  }
+}
+
+function filterAndRender() {
+  let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+
+  if (currentCatFilter !== 'all') {
+    filtered = filtered.filter(p => p.categoryId === currentCatFilter);
+  }
+  if (activeTagFilters.size > 0) {
+    filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
+  }
+
+  const grid = document.getElementById('productGrid');
+  const display = filtered.slice(0, 12);
+
+  if (display.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="ti ti-mood-empty"></i>目前沒有符合條件的商品</div>`;
+    return;
+  }
+
+  grid.innerHTML = display.map(p => {
+    const cat = categories.find(c => c.id === p.categoryId);
+    return renderProductCard({ ...p, categoryName: cat ? cat.name : '' }, settings.watermarkText);
+  }).join('');
+}
+
+init();
+</script>
+
+</body>
+</html>

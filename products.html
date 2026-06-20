@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>所有商品｜K.Zone 日韓代購</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+</head>
+<body>
+
+<div class="navbar">
+  <div class="container">
+    <a href="index.html" class="nav-icon-btn" aria-label="返回首頁" style="font-size:19px">
+      <i class="ti ti-arrow-left"></i>
+    </a>
+    <div class="logo-wrap">
+      <div class="logo-title">所有商品</div>
+    </div>
+    <a href="cart.html" class="nav-icon-btn" aria-label="購物車">
+      <i class="ti ti-shopping-cart"></i>
+      <span class="cart-badge" style="display:none">0</span>
+    </a>
+  </div>
+</div>
+
+<div class="src-nav">
+  <div class="container" id="srcNavList">
+    <button class="sn-item active" data-cat="all">全部</button>
+  </div>
+</div>
+
+<div class="stock-tabs" style="padding-top:14px">
+  <div class="container">
+    <button class="stab active" data-stock="instock">現貨</button>
+    <button class="stab" data-stock="preorder">預購</button>
+  </div>
+</div>
+
+<div class="tag-bar">
+  <div class="container" id="tagFilterList"></div>
+</div>
+
+<div class="sec-label"><div class="container"><span id="resultCount">商品列表</span><div class="line"></div></div></div>
+
+<div class="product-grid" id="productGrid">
+  <div class="loading-wrap" style="grid-column:1/-1"><div class="spin"></div>載入商品中...</div>
+</div>
+
+<div style="padding:20px 16px 50px; text-align:center" id="loadMoreWrap">
+  <button class="more-btn" id="loadMoreBtn" style="display:none; margin:0 auto">載入更多 <i class="ti ti-chevron-down"></i></button>
+</div>
+
+<a href="cart.html" class="cart-fab" aria-label="購物車">
+  <i class="ti ti-shopping-cart"></i>
+  <span class="cart-badge" style="display:none">0</span>
+</a>
+
+<script src="firebase-config.js"></script>
+<script src="assets/illustrations.js"></script>
+<script src="assets/common.js"></script>
+<script>
+let allProducts = [];
+let categories = [];
+let tags = [];
+let settings = {};
+let currentCatFilter = 'all';
+let currentStockFilter = 'instock';
+let activeTagFilters = new Set();
+let displayCount = 24;
+
+async function init() {
+  await ensureDefaultData();
+  refreshCartBadge();
+
+  const [settingsData, catSnap, tagSnap] = await Promise.all([
+    getSettings(),
+    db.collection(COL.CATEGORIES).orderBy('order').get(),
+    db.collection(COL.TAGS).orderBy('order').get()
+  ]);
+  settings = settingsData;
+  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  renderCategoryNav();
+  renderTagFilters();
+  await loadProducts();
+
+  document.getElementById('loadMoreBtn').addEventListener('click', () => {
+    displayCount += 24;
+    filterAndRender();
+  });
+}
+
+function renderCategoryNav() {
+  const list = document.getElementById('srcNavList');
+  let html = `<button class="sn-item active" data-cat="all">全部</button>`;
+  categories.forEach(cat => {
+    html += `<button class="sn-item" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.sn-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      list.querySelectorAll('.sn-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentCatFilter = btn.dataset.cat;
+      displayCount = 24;
+      filterAndRender();
+    });
+  });
+}
+
+function renderTagFilters() {
+  const list = document.getElementById('tagFilterList');
+  let html = `<button class="tg active" data-tag="all">全部</button>`;
+  tags.forEach(tag => {
+    html += `<button class="tg" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.tg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tagId = btn.dataset.tag;
+      if (tagId === 'all') {
+        activeTagFilters.clear();
+        list.querySelectorAll('.tg').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      } else {
+        list.querySelector('[data-tag="all"]').classList.remove('active');
+        if (activeTagFilters.has(tagId)) {
+          activeTagFilters.delete(tagId);
+          btn.classList.remove('active');
+        } else {
+          activeTagFilters.add(tagId);
+          btn.classList.add('active');
+        }
+        if (activeTagFilters.size === 0) {
+          list.querySelector('[data-tag="all"]').classList.add('active');
+        }
+      }
+      displayCount = 24;
+      filterAndRender();
+    });
+  });
+
+  document.querySelectorAll('.stab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentStockFilter = btn.dataset.stock;
+      displayCount = 24;
+      filterAndRender();
+    });
+  });
+}
+
+async function loadProducts() {
+  try {
+    const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
+    allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    filterAndRender();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('productGrid').innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="ti ti-alert-circle"></i>商品載入失敗</div>`;
+  }
+}
+
+function filterAndRender() {
+  let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+  if (currentCatFilter !== 'all') filtered = filtered.filter(p => p.categoryId === currentCatFilter);
+  if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
+
+  const grid = document.getElementById('productGrid');
+  document.getElementById('resultCount').textContent = `共 ${filtered.length} 項商品`;
+
+  const display = filtered.slice(0, displayCount);
+
+  if (display.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="ti ti-mood-empty"></i>目前沒有符合條件的商品</div>`;
+    document.getElementById('loadMoreBtn').style.display = 'none';
+    return;
+  }
+
+  grid.innerHTML = display.map(p => {
+    const cat = categories.find(c => c.id === p.categoryId);
+    return renderProductCard({ ...p, categoryName: cat ? cat.name : '' }, settings.watermarkText);
+  }).join('');
+
+  document.getElementById('loadMoreBtn').style.display = filtered.length > displayCount ? 'flex' : 'none';
+}
+
+init();
+</script>
+
+</body>
+</html>
