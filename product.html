@@ -5,10 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>商品詳情｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 <style>
 .detail-imgs { display: flex; gap: 8px; padding: 12px 16px; overflow-x: auto; }
 .detail-imgs::-webkit-scrollbar { display: none; }
@@ -48,11 +46,11 @@
 <div class="navbar">
   <div class="container">
     <button class="nav-icon-btn" onclick="history.back()" aria-label="返回" style="font-size:19px">
-      <i class="ti ti-arrow-left"></i>
+      <span class="ico" data-icon="arrow-left" data-size="18"></span>
     </button>
     <div class="logo-wrap"><div class="logo-title" style="font-size:15px">商品詳情</div></div>
     <a href="cart.html" class="nav-icon-btn" aria-label="購物車">
-      <i class="ti ti-shopping-cart"></i>
+      <span class="ico" data-icon="shopping-cart" data-size="18"></span>
       <span class="cart-badge" style="display:none">0</span>
     </a>
   </div>
@@ -65,14 +63,16 @@
 <div class="sticky-bottom" id="bottomBar" style="display:none">
   <div class="container">
     <button class="btn-primary" id="addCartBtn" style="display:flex; align-items:center; justify-content:center; gap:8px">
-      <i class="ti ti-shopping-cart-plus"></i> 加入購物車
+      <span class="ico" data-icon="shopping-cart-plus" data-size="18"></span> 加入購物車
     </button>
   </div>
 </div>
 
 <script src="firebase-config.js"></script>
+<script src="assets/icons.js"></script>
 <script src="assets/illustrations.js"></script>
 <script src="assets/common.js"></script>
+<script>document.addEventListener("DOMContentLoaded", () => renderStaticIcons());</script>
 <script>
 let product = null;
 let settings = {};
@@ -91,7 +91,7 @@ async function init() {
   refreshCartBadge();
   const id = getProductId();
   if (!id) {
-    document.getElementById('content').innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>找不到商品</div>`;
+    document.getElementById('content').innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}找不到商品</div>`;
     return;
   }
 
@@ -107,7 +107,7 @@ async function init() {
   tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   if (!prodDoc.exists) {
-    document.getElementById('content').innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>找不到此商品，可能已被下架</div>`;
+    document.getElementById('content').innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}找不到此商品，可能已被下架</div>`;
     return;
   }
 
@@ -132,7 +132,7 @@ function render() {
       </div>
     `;
   } else {
-    imgsHtml = `<div class="detail-imgs"><div class="dimg-main"><i class="ti ti-photo" style="font-size:48px;color:var(--c-sand)"></i></div></div>`;
+    imgsHtml = `<div class="detail-imgs"><div class="dimg-main">${icon('photo', 48)}</div></div>`;
   }
 
   let stylesHtml = '';

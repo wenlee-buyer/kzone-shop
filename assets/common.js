@@ -69,13 +69,34 @@ function blobToDataURL(blob) {
   });
 }
 
-// 上傳圖片到 Firebase Storage，回傳網址（注意：Firestore 只存網址，不存圖片本身）
+// ============================================
+// 圖片上傳改用 Cloudinary（免費額度大、不依賴 Firebase Storage 計費）
+// 共用同一個帳號的 unsigned preset，但用資料夾路徑做區隔，
+// 不會跟原本訂單系統(proxy-tool)的圖片混在一起
+// ============================================
+const CLOUDINARY_CLOUD_NAME = 'dkuseooqg';
+const CLOUDINARY_UPLOAD_PRESET = 'proxy_upload';
+
+// 上傳圖片到 Cloudinary，回傳網址（注意：Firestore 只存網址，不存圖片本身）
 async function uploadImageToStorage(blob, pathPrefix = 'products') {
-  const storage = firebase.storage();
-  const filename = `${pathPrefix}/${genId('img')}.jpg`;
-  const ref = storage.ref().child(filename);
-  await ref.put(blob);
-  return await ref.getDownloadURL();
+  const formData = new FormData();
+  formData.append('file', blob);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('folder', `kzone/${pathPrefix}`);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error('Cloudinary 上傳失敗:', errText);
+    throw new Error('圖片上傳失敗，請稍後再試');
+  }
+
+  const data = await response.json();
+  return data.secure_url;
 }
 
 // ---- 處理剪貼簿貼上圖片（電腦版可直接 Ctrl+V）----
@@ -99,7 +120,7 @@ function renderProductCard(product, watermarkText) {
   const imgUrl = (product.images && product.images[0]) || '';
   const imgHtml = imgUrl
     ? `<img src="${imgUrl}" alt="${escapeHtml(product.name)}" loading="lazy">`
-    : `<i class="ti ti-photo" style="font-size:30px;color:#e9cdae"></i>`;
+    : `${icon('photo', 30)}`;
 
   return `
     <div class="pcard" data-id="${product.id}" onclick="goToProduct('${product.id}')">

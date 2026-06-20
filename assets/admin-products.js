@@ -19,7 +19,7 @@ async function renderProductsPage() {
       </div>
       <div class="admin-btn-row">
         <button class="btn-secondary" id="toggleArchivedBtn" style="width:auto">查看已封存商品</button>
-        <button class="btn-primary" id="addProductBtn" style="width:auto"><i class="ti ti-plus"></i> 新增商品</button>
+        <button class="btn-primary" id="addProductBtn" style="width:auto">+ 新增商品</button>
       </div>
     </div>
 
@@ -71,7 +71,7 @@ async function loadAndRenderProductsTable() {
     }
 
     if (products.length === 0) {
-      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i>目前沒有商品</div>`;
+      wrap.innerHTML = `<div class="empty-state">${icon('package-off', 18)}目前沒有商品</div>`;
       return;
     }
 
@@ -96,7 +96,7 @@ async function loadAndRenderProductsTable() {
 
   } catch (err) {
     console.error(err);
-    wrap.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>載入失敗</div>`;
+    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入失敗</div>`;
   }
 }
 
@@ -117,10 +117,10 @@ function renderProductRow(p) {
       <td>${formatPrice(p.price)}</td>
       <td>${p.styles && p.styles.length ? p.styles.length + ' 款' : '無'}</td>
       <td>
-        <div style="display:flex; gap:6px">
-          <button class="btn-icon" id="edit-${p.id}" title="編輯"><i class="ti ti-edit"></i></button>
-          <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}"><i class="ti ti-archive"></i></button>
-          <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除"><i class="ti ti-trash"></i></button>
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <button class="btn-icon" id="edit-${p.id}" title="編輯">編輯</button>
+          <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}">${p.archived ? '取消封存' : '封存'}</button>
+          <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除">刪除</button>
         </div>
       </td>
     </tr>
@@ -172,7 +172,7 @@ function openProductEditor(product) {
         <div class="field">
           <label class="field-label">商品圖片（最多6張，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印）</label>
           <div class="img-upload-zone" id="pasteZone" tabindex="0">
-            <i class="ti ti-photo-plus" style="font-size:26px; display:block; margin-bottom:6px"></i>
+            ${icon('photo-plus', 26)}
             點此區塊後按 Ctrl+V 貼上截圖，或點擊下方按鈕選擇檔案
           </div>
           <input type="file" id="pf_fileInput" accept="image/*" multiple style="display:none">
@@ -235,7 +235,7 @@ function openProductEditor(product) {
     stylesListEl.innerHTML = styles.map((s, i) => `
       <div class="style-input-row">
         <input type="text" value="${escapeHtml(s)}" data-style-idx="${i}">
-        <button class="btn-icon danger" data-remove-style="${i}"><i class="ti ti-x"></i></button>
+        <button class="btn-icon danger" data-remove-style="${i}">移除</button>
       </div>
     `).join('');
     stylesListEl.querySelectorAll('[data-style-idx]').forEach(input => {

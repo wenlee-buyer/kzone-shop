@@ -26,7 +26,7 @@ async function loadAndRenderOrders() {
     const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
     if (orders.length === 0) {
-      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-off"></i>目前還沒有任何訂單</div>`;
+      wrap.innerHTML = `<div class="empty-state">${icon('clipboard-off', 18)}目前還沒有任何訂單</div>`;
       return;
     }
 
@@ -42,7 +42,7 @@ async function loadAndRenderOrders() {
 
   } catch (err) {
     console.error(err);
-    wrap.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>載入訂單失敗</div>`;
+    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入訂單失敗</div>`;
   }
 }
 
@@ -55,10 +55,10 @@ function renderOrderCard(order) {
     <div style="border:0.5px solid var(--c-blush); border-radius:10px; margin-bottom:10px; overflow:hidden">
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:var(--c-cream)" id="toggle-order-${order.id}">
         <div>
-          <div style="font-size:13px; font-weight:700; color:var(--c-coffee)"><i class="ti ti-user" style="margin-right:5px"></i>${escapeHtml(order.lineName || '未提供')}</div>
-          <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px"><i class="ti ti-clock" style="margin-right:4px"></i>${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}</div>
+          <div style="font-size:13px; font-weight:700; color:var(--c-coffee)">${icon('user', 18)}${escapeHtml(order.lineName || '未提供')}</div>
+          <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">${icon('clock', 18)}${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}</div>
         </div>
-        <button class="btn-icon danger" id="del-order-${order.id}" title="刪除此訂單" onclick="event.stopPropagation()"><i class="ti ti-trash"></i></button>
+        <button class="btn-icon danger" id="del-order-${order.id}" title="刪除此訂單" onclick="event.stopPropagation()">${icon('trash', 18)}</button>
       </div>
       <div id="detail-order-${order.id}" style="display:none; padding:12px 14px">
         ${(order.items || []).map(item => `

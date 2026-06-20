@@ -19,12 +19,12 @@ async function renderImportPage() {
         <div class="admin-title">商品同步匯入</div>
         <div class="admin-subtitle">從原本的訂單管理網站匯入商品，已匯入過的商品不會重複出現</div>
       </div>
-      <button class="btn-primary" id="refreshImportBtn" style="width:auto"><i class="ti ti-refresh"></i> 重新讀取來源商品</button>
+      <button class="btn-primary" id="refreshImportBtn" style="width:auto">${icon('refresh', 18)} 重新讀取來源商品</button>
     </div>
 
     <div class="admin-card" style="background:var(--c-cream); border-color:var(--c-sand)">
       <p style="font-size:12px; color:var(--c-coffee); line-height:1.8">
-        <i class="ti ti-info-circle" style="margin-right:6px"></i>
+        ${icon('info-circle', 18)}
         系統會讀取你原本訂單網站（proxy-tool）裡的商品主檔，圖片網址會直接共用引用、台幣價格會嘗試從歷史訂單紀錄帶入參考值。
         匯入後請務必補填「來源分類」「角色標籤」「小編推薦」等楓谷網站專屬欄位，並確認價格無誤後再儲存。
       </p>
@@ -48,7 +48,7 @@ async function loadSourceProducts() {
 
     const proxyDataDoc = await db.collection('proxy').doc('data').get();
     if (!proxyDataDoc.exists) {
-      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>找不到原訂單網站的資料，請確認資料結構是否變更</div>`;
+      wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}找不到原訂單網站的資料，請確認資料結構是否變更</div>`;
       return;
     }
 
@@ -63,7 +63,7 @@ async function loadSourceProducts() {
 
   } catch (err) {
     console.error(err);
-    wrap.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>讀取失敗，請確認網路連線或 Firebase 權限設定</div>`;
+    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}讀取失敗，請確認網路連線或 Firebase 權限設定</div>`;
   }
 }
 
@@ -88,7 +88,7 @@ function renderImportList() {
   const products = importPageState.sourceProducts;
 
   if (products.length === 0) {
-    wrap.innerHTML = `<div class="empty-state"><i class="ti ti-circle-check"></i>沒有新商品可匯入，所有商品都已經同步過了</div>`;
+    wrap.innerHTML = `<div class="empty-state">${icon('circle-check', 18)}沒有新商品可匯入，所有商品都已經同步過了</div>`;
     return;
   }
 

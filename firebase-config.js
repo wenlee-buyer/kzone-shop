@@ -58,7 +58,7 @@ const DEFAULT_SETTINGS = {
   lineOfficialUrl: 'https://lin.ee/r11kJmF',
   lineCommunityUrl: 'https://line.me/ti/g2/M2vucvJ9fCdggxca09QagYGsOAM2ll58btnz1A',
   lineCommunityTitle: '【K.Zone】楓之谷🍁週邊補給站',
-  lineCommunityText: '可以加入社群獲得第一手預購/到貨/現貨上架消息，群組還有優惠價喔!\n(除此之外平常很安靜不會打擾)',
+  lineCommunityText: '加入社群獲得第一手預購/到貨/現貨上架消息，群組還有優惠價喔!\n(除此之外平常很安靜不會打擾)',
   firstCartReminderText: '【購買需知】\n1. 預購的商品會幫您加入登記，提供清單確認\n2. 確認後需付訂金50%，會額外告知您金額/轉帳帳號\n3. 海外商品需空運，到貨時間為一到二星期，可以主動詢問官方小編\n4. 到貨後會通知您下單，尾款使用超商貨到付款，可以選擇7-11(運費38)/全家(運費35)寄出',
   watermarkText: 'k.zone.buying',
   adminPassword: '1qaz2wsx'

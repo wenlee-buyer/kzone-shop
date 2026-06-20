@@ -47,7 +47,7 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
   function renderList() {
     const list = document.getElementById('taxonomyList');
     if (items.length === 0) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-tag-off"></i>尚未新增任何${itemLabel}</div>`;
+      list.innerHTML = `<div class="empty-state">${icon('tag-off', 18)}尚未新增任何${itemLabel}</div>`;
       return;
     }
     list.innerHTML = `
@@ -58,15 +58,15 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
             <tr>
               <td>
                 <div style="display:flex; gap:4px">
-                  <button class="btn-icon" data-move-up="${item.id}" ${idx===0?'disabled style="opacity:0.3"':''}><i class="ti ti-chevron-up"></i></button>
-                  <button class="btn-icon" data-move-down="${item.id}" ${idx===items.length-1?'disabled style="opacity:0.3"':''}><i class="ti ti-chevron-down"></i></button>
+                  <button class="btn-icon" data-move-up="${item.id}" ${idx===0?'disabled style="opacity:0.3"':''}>${icon('chevron-up', 18)}</button>
+                  <button class="btn-icon" data-move-down="${item.id}" ${idx===items.length-1?'disabled style="opacity:0.3"':''}>${icon('chevron-down', 18)}</button>
                 </div>
               </td>
               <td><input type="text" value="${escapeHtml(item.name)}" data-edit-name="${item.id}" style="border:0.5px solid var(--c-blush); border-radius:6px; padding:6px 9px; font-size:13px; width:160px"></td>
               <td>
                 <div style="display:flex; gap:6px">
-                  <button class="btn-icon" data-save="${item.id}" title="儲存名稱"><i class="ti ti-check"></i></button>
-                  <button class="btn-icon danger" data-delete="${item.id}" title="刪除"><i class="ti ti-trash"></i></button>
+                  <button class="btn-icon" data-save="${item.id}" title="儲存名稱">${icon('check', 18)}</button>
+                  <button class="btn-icon danger" data-delete="${item.id}" title="刪除">${icon('trash', 18)}</button>
                 </div>
               </td>
             </tr>
