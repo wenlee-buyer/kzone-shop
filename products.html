@@ -33,8 +33,9 @@
 
 <div class="stock-tabs" style="padding-top:14px">
   <div class="container">
-    <button class="stab active" data-stock="instock">現貨</button>
-    <button class="stab" data-stock="preorder">預購</button>
+    <button class="stab active" data-stock="all"><span class="stab-inner">全部商品</span></button>
+    <button class="stab" data-stock="instock"><span class="stab-inner">現貨</span></button>
+    <button class="stab" data-stock="preorder"><span class="stab-inner">預購</span></button>
   </div>
 </div>
 
@@ -73,7 +74,7 @@ let categories = [];
 let tags = [];
 let settings = {};
 let currentCatFilter = 'all';
-let currentStockFilter = 'instock';
+let currentStockFilter = 'all';
 let activeTagFilters = new Set();
 let displayCount = 24;
 
@@ -174,7 +175,9 @@ async function loadProducts() {
 }
 
 function filterAndRender() {
-  let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+  let filtered = currentStockFilter === 'all'
+    ? allProducts.slice()
+    : allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
 
   if (currentCatFilter === 'new') {
     const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
@@ -186,6 +189,8 @@ function filterAndRender() {
     filtered = filtered.filter(p => p.categoryId === currentCatFilter);
   }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
+
+  filtered.sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
 
   const grid = document.getElementById('productGrid');
   document.getElementById('resultCount').textContent = `共 ${filtered.length} 項商品`;

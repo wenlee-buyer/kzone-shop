@@ -46,7 +46,6 @@
 韓國直送</h1>
       <p id="heroSubtitle">最新周邊空運到台
 數量有限・先搶先贏！</p>
-      <button class="hero-btn" onclick="document.getElementById('productSection').scrollIntoView({behavior:'smooth'})">立即逛逛</button>
     </div>
     <div class="hero-art" id="heroArt"></div>
   </div>
@@ -57,8 +56,9 @@
 <div class="sec-label"><div class="container"><span>現貨 / 預購</span><div class="line"></div></div></div>
 <div class="stock-tabs">
   <div class="container">
-    <button class="stab active" data-stock="instock">現貨</button>
-    <button class="stab" data-stock="preorder">預購</button>
+    <button class="stab active" data-stock="all"><span class="stab-inner">全部商品</span></button>
+    <button class="stab" data-stock="instock"><span class="stab-inner">現貨</span></button>
+    <button class="stab" data-stock="preorder"><span class="stab-inner">預購</span></button>
   </div>
 </div>
 
@@ -125,7 +125,7 @@ let categories = [];
 let tags = [];
 let settings = {};
 let currentCatFilter = 'all';
-let currentStockFilter = 'instock';
+let currentStockFilter = 'all';
 let activeTagFilters = new Set();
 
 async function init() {
@@ -243,7 +243,9 @@ async function loadProducts() {
 }
 
 function filterAndRender() {
-  let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+  let filtered = currentStockFilter === 'all'
+    ? allProducts.slice()
+    : allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
 
   if (currentCatFilter === 'new') {
     const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
@@ -251,12 +253,18 @@ function filterAndRender() {
       const createdAt = p.createdAt?.toDate ? p.createdAt.toDate().getTime() : null;
       return createdAt !== null && createdAt >= fourteenDaysAgo;
     });
-  } else if (currentCatFilter !== 'all') {
+  } else if (currentCatFilter === 'all') {
+    // 首頁預設只顯示後台勾選「精選顯示在首頁」的商品；若完全沒有勾選任何商品，則退回顯示全部，避免首頁開天窗
+    const featuredOnly = filtered.filter(p => p.featured);
+    filtered = featuredOnly.length > 0 ? featuredOnly : filtered;
+  } else {
     filtered = filtered.filter(p => p.categoryId === currentCatFilter);
   }
   if (activeTagFilters.size > 0) {
     filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
   }
+
+  filtered.sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
 
   const grid = document.getElementById('productGrid');
   const display = filtered.slice(0, 12);

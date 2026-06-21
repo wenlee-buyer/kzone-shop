@@ -11,6 +11,8 @@
 <style>
 .cart-page { padding: 12px 16px 200px; max-width: 560px; margin: 0 auto; }
 .cart-item { background: #fff; border-radius: 12px; border: 0.5px solid var(--c-blush); padding: 12px; display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-start; }
+.cart-item-preorder { border: 1px solid var(--c-orange); background: #fffaf5; }
+.ci-preorder-tag { display: inline-block; background: var(--c-orange); color: #fff; font-size: 9px; padding: 2px 7px; border-radius: 6px; vertical-align: middle; font-weight: 700; margin-left: 4px; }
 .ci-img { width: 60px; height: 60px; background: var(--c-cream); border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .ci-img img { width: 100%; height: 100%; object-fit: cover; }
 .ci-info { flex: 1; min-width: 0; }
@@ -93,10 +95,10 @@ function render() {
   const totalQty = cart.reduce((sum, item) => sum + item.qty, 0);
 
   let html = cart.map((item, idx) => `
-    <div class="cart-item">
+    <div class="cart-item ${item.stockType === 'preorder' ? 'cart-item-preorder' : ''}">
       <div class="ci-img">${item.image ? `<img src="${item.image}" alt="${escapeHtml(item.name)}">` : `${icon('photo', 18)}`}</div>
       <div class="ci-info">
-        <div class="ci-name">${escapeHtml(item.name)}</div>
+        <div class="ci-name">${escapeHtml(item.name)} ${item.stockType === 'preorder' ? '<span class="ci-preorder-tag">預購</span>' : ''}</div>
         ${item.style ? `<div class="ci-style">款式：${escapeHtml(item.style)}</div>` : ''}
         <div class="ci-row">
           <span class="ci-price">${formatPrice(item.price)}</span>
@@ -125,6 +127,7 @@ function render() {
   `;
 
   const hasPreorder = cart.some(item => item.stockType === 'preorder');
+  const hasInstock = cart.some(item => item.stockType !== 'preorder');
 
   if (hasPreorder) {
     html += `
@@ -140,6 +143,7 @@ function render() {
         <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號
       </button>
       <button class="btn-secondary" disabled style="margin-top:8px; opacity:0.4; cursor:not-allowed">結帳並填寫超商取貨資訊（含預購商品時無法使用）</button>
+      ${hasInstock ? `<button class="btn-secondary" id="removePreorderBtn" style="margin-top:8px; color:var(--c-orange); border-color:var(--c-orange)">不想等預購？移除預購商品，僅結帳現貨</button>` : ''}
     `;
   } else {
     html += `
@@ -174,6 +178,15 @@ function render() {
   container.innerHTML = html;
   document.getElementById('submitOrderBtn')?.addEventListener('click', handleSubmitOrder);
   document.getElementById('openCvsFormBtn')?.addEventListener('click', openCvsForm);
+  document.getElementById('removePreorderBtn')?.addEventListener('click', () => {
+    if (!confirm('確定要移除購物車中所有預購商品嗎？')) return;
+    const cart = getCart();
+    const filtered = cart.filter(item => item.stockType !== 'preorder');
+    saveCart(filtered);
+    refreshCartBadge();
+    render();
+    showToast('已移除預購商品');
+  });
 }
 
 function changeQty(idx, delta) {
@@ -330,9 +343,13 @@ function openCvsForm() {
         <div class="field">
           <label class="field-label">取件門市（7-ELEVEN）<span style="color:var(--c-orange)">*</span></label>
           <input type="text" id="cvs_store" placeholder="請輸入6碼門市店號">
-          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px">
-            請先至 <a href="https://emap.pcsc.com.tw/ecmap/default.aspx" target="_blank" style="color:var(--c-orange); text-decoration:underline">7-ELEVEN門市查詢系統</a> 查詢您要取件的門市店號後填入
+          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px; line-height:1.6">
+            可至 <a href="https://emap.pcsc.com.tw/ecmap/default.aspx" target="_blank" style="color:var(--c-orange); text-decoration:underline">7-ELEVEN門市查詢系統</a> 查詢店號後填入。若連結開啟異常，也可填寫下方門市名稱，小編會協助核對店號。
           </p>
+        </div>
+        <div class="field">
+          <label class="field-label">取件門市名稱（選填，輔助核對用）</label>
+          <input type="text" id="cvs_storeName" placeholder="例：7-ELEVEN 楓谷門市">
         </div>
         <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
@@ -362,6 +379,7 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
   const name = document.getElementById('cvs_name').value.trim();
   const phone = document.getElementById('cvs_phone').value.trim();
   const store = document.getElementById('cvs_store').value.trim();
+  const storeName = document.getElementById('cvs_storeName').value.trim();
 
   if (!name) { showToast('請填寫取件人姓名'); return; }
   if (!/^09\d{8}$/.test(phone)) { showToast('請填寫正確的10碼手機號碼'); return; }
@@ -381,6 +399,7 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
       cvsName: name,
       cvsPhone: phone,
       cvsStore: store,
+      cvsStoreName: storeName,
       items: cart,
       subtotal: subtotal,
       shippingFee: shipping,
