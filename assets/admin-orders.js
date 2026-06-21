@@ -82,7 +82,7 @@ function renderOrderCard(order) {
 
   const cvsInfo = isCvs ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
-      取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}<br>
+      取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
       商品小計：${formatPrice(order.subtotal)} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}
     </div>
   ` : '';
@@ -137,9 +137,11 @@ async function exportOrdersToExcel() {
     const startDate = new Date(startDateStr + 'T00:00:00');
     const endDate = new Date(endDateStr + 'T23:59:59');
 
+    // 注意：這裡刻意只用單一 where 條件，不搭配 orderBy，
+    // 因為 where+orderBy 不同欄位的組合查詢在 Firestore 需要額外手動建立複合索引，
+    // 否則查詢會直接失敗。排序改在前端做，避免這個問題。
     const snap = await db.collection(COL.ORDERS)
       .where('orderType', '==', 'cvs')
-      .orderBy('createdAt', 'asc')
       .get();
 
     const orders = snap.docs
@@ -147,6 +149,11 @@ async function exportOrdersToExcel() {
       .filter(o => {
         const t = o.createdAt?.toDate ? o.createdAt.toDate() : null;
         return t && t >= startDate && t <= endDate;
+      })
+      .sort((a, b) => {
+        const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+        const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+        return ta - tb;
       });
 
     if (orders.length === 0) {
@@ -160,6 +167,7 @@ async function exportOrdersToExcel() {
       const date = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
       const dateStr = `${date.getFullYear()}/${date.getMonth()+1}/${date.getDate()}`;
       const itemSummary = (o.items || []).map(i => `${i.name}${i.style ? '('+i.style+')' : ''}x${i.qty}`).join('、');
+      const storeNamePart = o.cvsStoreName ? `［門市名稱：${o.cvsStoreName}］` : '';
       return [
         o.cvsName || '',
         o.cvsPhone || '',
@@ -169,7 +177,7 @@ async function exportOrdersToExcel() {
         o.subtotal ?? o.total ?? 0,
         o.shippingFee ?? calcShippingFee(o.subtotal ?? o.total ?? 0),
         dateStr,
-        itemSummary,
+        `${itemSummary}${storeNamePart}`,
         `LINE：${o.lineName || ''}`
       ];
     });

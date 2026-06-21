@@ -194,6 +194,17 @@ function openProductEditor(product) {
           <input type="text" id="pf_name" value="${product ? escapeHtml(product.name) : ''}" placeholder="例：菇菇寶貝毛絨玩偶">
         </div>
 
+        <div class="field" style="background:var(--c-cream); border-radius:8px; padding:12px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-coffee); cursor:pointer">
+            <input type="checkbox" id="pf_featured" ${product?.featured ? 'checked' : ''} style="width:16px; height:16px">
+            精選顯示在首頁「所有商品」區塊
+          </label>
+          <div style="margin-top:10px">
+            <label class="field-label">排序值（數字越小越排前面，同時影響首頁精選排序與分類列表排序，留空則排最後）</label>
+            <input type="number" id="pf_sortOrder" value="${product?.sortOrder ?? ''}" placeholder="例：1">
+          </div>
+        </div>
+
         <div class="field">
           <label class="field-label">商品圖片（最多6張，建議1080x1080正方形圖。非正方形圖片會自動跳出裁切視窗，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印）</label>
           <div class="img-upload-zone" id="pasteZone" tabindex="0">
@@ -461,6 +472,9 @@ async function saveProduct(styles) {
   const recommendation = document.getElementById('pf_recommendation').value.trim();
   const stockType = document.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
+  const featured = document.getElementById('pf_featured').checked;
+  const sortOrderVal = document.getElementById('pf_sortOrder').value;
+  const sortOrder = sortOrderVal === '' ? 9999 : parseInt(sortOrderVal);
   const cleanStyles = styles
     .filter(s => s.name.trim())
     .map(s => ({ name: s.name.trim(), stock: s.stock === '' || s.stock === null ? null : parseInt(s.stock) }));
@@ -488,7 +502,8 @@ async function saveProduct(styles) {
 
     const productData = {
       name, categoryId, price, recommendation, stockType, tagIds,
-      stock: cleanStyles.length > 0 ? null : stock, // 有款式時改用各款式庫存，整體stock不使用
+      featured, sortOrder,
+      stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,
       images: imageUrls,
       archived: false,
