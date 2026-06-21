@@ -20,11 +20,13 @@
 .dbadges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .dbadge { font-size: 11px; background: var(--c-cream); color: var(--c-coffee); padding: 4px 10px; border-radius: 8px; border: 0.5px solid var(--c-sand); font-weight: 500; }
 .dprice { font-size: 23px; font-weight: 700; color: var(--c-orange); margin-top: 12px; }
-.drec { background: var(--c-cream); border-radius: 10px; padding: 12px 14px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); line-height: 1.7; border-left: 3px solid var(--c-orange); white-space: pre-line; }
+.drec { background: var(--c-cream); border-radius: 10px; padding: 14px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); line-height: 1.7; border-left: 3px solid var(--c-orange); white-space: pre-line; text-align: left; }
 .style-label { font-size: 13px; font-weight: 700; color: var(--c-coffee); margin: 18px 0 8px; }
 .style-opts { display: flex; gap: 8px; flex-wrap: wrap; }
 .sopt { padding: 8px 14px; border-radius: 8px; border: 0.5px solid var(--c-rose); font-size: 13px; color: var(--c-rose-text); cursor: pointer; background: #fff; }
 .sopt.active { background: var(--c-coffee); color: #fff; border-color: var(--c-coffee); }
+.sopt.sopt-soldout { background: #f1efe8; color: #b0aaa3; border-color: #e0dcd5; cursor: not-allowed; text-decoration: line-through; }
+.sopt.sopt-soldout.active { background: #f1efe8; color: #b0aaa3; border-color: #e0dcd5; }
 .qty-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
 .qty-label { font-size: 13px; color: var(--c-coffee); font-weight: 700; }
 .qty-ctrl { display: flex; align-items: center; gap: 12px; }
@@ -34,8 +36,8 @@
 .sticky-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: var(--c-bg); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 0.5px solid var(--c-blush); z-index: 60; }
 .sticky-bottom .container { max-width: 480px; margin: 0 auto; }
 @media (min-width: 1024px) {
-  .detail-imgs { padding: 16px 24px; }
-  .detail-info { padding: 4px 24px 100px; max-width: 700px; }
+  .detail-imgs { padding: 24px; max-width: 700px; margin: 0 auto; justify-content: center; }
+  .detail-info { padding: 4px 24px 100px; max-width: 700px; margin: 0 auto; }
   .dimg-main { width: 340px; height: 340px; }
   .sticky-bottom .container { max-width: 700px; margin: 0 auto; }
 }
@@ -116,10 +118,13 @@ async function init() {
 }
 
 function render() {
+  product.styles = normalizeStyles(product.styles); // 相容舊格式資料
   const cat = categories.find(c => c.id === product.categoryId);
   const productTags = (product.tagIds || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean);
   const images = product.images && product.images.length > 0 ? product.images : [];
   const stockBadgeText = product.stockType === 'preorder' ? '預購' : '現貨';
+  const hasStyles = product.styles && product.styles.length > 0;
+  const productSoldOut = isProductSoldOut(product);
 
   let imgsHtml = '';
   if (images.length > 0) {
@@ -136,15 +141,39 @@ function render() {
   }
 
   let stylesHtml = '';
-  if (product.styles && product.styles.length > 0) {
+  if (hasStyles) {
+    // 預設選第一個還沒賣完的款式；如果全部都賣完，選第一個
+    const firstAvailable = product.styles.find(s => !(s.stock !== null && s.stock !== undefined && s.stock <= 0));
+    selectedStyle = (firstAvailable || product.styles[0]).name;
+
     stylesHtml = `
       <div class="style-label">選擇款式</div>
       <div class="style-opts" id="styleOpts">
-        ${product.styles.map((s, i) => `<div class="sopt ${i===0?'active':''}" data-style="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join('')}
+        ${product.styles.map((s) => {
+          const soldOut = s.stock !== null && s.stock !== undefined && s.stock <= 0;
+          const isSelected = s.name === selectedStyle;
+          return `<div class="sopt ${isSelected ? 'active' : ''} ${soldOut ? 'sopt-soldout' : ''}" data-style="${escapeHtml(s.name)}" data-soldout="${soldOut}">${escapeHtml(s.name)}${soldOut ? '（已售完）' : ''}</div>`;
+        }).join('')}
       </div>
     `;
-    selectedStyle = product.styles[0];
   }
+
+  const buyAreaHtml = productSoldOut ? `
+      <div class="stock-note" style="background:#f1efe8; border-color:var(--c-rose); text-align:center; font-size:13px; font-weight:700; color:var(--c-rose-text); padding:16px">
+        此商品目前已售完
+      </div>
+  ` : `
+      ${stylesHtml}
+      <div class="qty-row">
+        <span class="qty-label">數量</span>
+        <div class="qty-ctrl">
+          <button class="qbtn" id="qtyMinus" aria-label="減少數量">−</button>
+          <span class="qnum" id="qtyNum">1</span>
+          <button class="qbtn" id="qtyPlus" aria-label="增加數量">+</button>
+        </div>
+      </div>
+      <div class="stock-note">現貨數量變化大，此為預估數量。現貨數量是否足夠，須以訂購數量回傳官方帳號後，官方確認回覆後為主。</div>
+  `;
 
   document.getElementById('content').innerHTML = `
     ${imgsHtml}
@@ -156,28 +185,31 @@ function render() {
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
       <div class="dprice">${formatPrice(product.price)}</div>
-      ${product.recommendation ? `<div class="drec">✨ 小編推薦：${escapeHtml(product.recommendation)}</div>` : ''}
-      ${stylesHtml}
-      <div class="qty-row">
-        <span class="qty-label">數量</span>
-        <div class="qty-ctrl">
-          <button class="qbtn" id="qtyMinus" aria-label="減少數量">−</button>
-          <span class="qnum" id="qtyNum">1</span>
-          <button class="qbtn" id="qtyPlus" aria-label="增加數量">+</button>
-        </div>
-      </div>
-      <div class="stock-note">現貨數量變化大，此為預估數量。現貨數量是否足夠，須以訂購數量回傳官方帳號後，官方確認回覆後為主。</div>
+      ${product.recommendation ? `<div class="drec">✨ 小編推薦<br>${escapeHtml(product.recommendation)}</div>` : ''}
+      ${buyAreaHtml}
     </div>
   `;
 
   document.title = `${product.name}｜${settings.siteName}`;
+
+  if (productSoldOut) {
+    document.getElementById('bottomBar').style.display = 'none';
+    return;
+  }
   document.getElementById('bottomBar').style.display = 'block';
+
+  qty = 1;
 
   document.getElementById('qtyMinus').addEventListener('click', () => {
     qty = Math.max(1, qty - 1);
     document.getElementById('qtyNum').textContent = qty;
   });
   document.getElementById('qtyPlus').addEventListener('click', () => {
+    const maxStock = getAvailableStock(product, selectedStyle);
+    if (maxStock !== null && qty >= maxStock) {
+      showToast(`此款式庫存僅剩 ${maxStock} 件`);
+      return;
+    }
     qty += 1;
     document.getElementById('qtyNum').textContent = qty;
   });
@@ -186,9 +218,15 @@ function render() {
   if (styleOptsEl) {
     styleOptsEl.querySelectorAll('.sopt').forEach(el => {
       el.addEventListener('click', () => {
+        if (el.dataset.soldout === 'true') {
+          showToast('這個款式已經售完囉');
+          return;
+        }
         styleOptsEl.querySelectorAll('.sopt').forEach(o => o.classList.remove('active'));
         el.classList.add('active');
         selectedStyle = el.dataset.style;
+        qty = 1;
+        document.getElementById('qtyNum').textContent = qty;
       });
     });
   }
@@ -204,7 +242,28 @@ function switchImg(idx) {
   });
 }
 
-function handleAddToCart() {
+async function handleAddToCart() {
+  // 重新讀取最新庫存，避免使用者在頁面停留期間庫存已被其他人買完
+  try {
+    const freshDoc = await db.collection(COL.PRODUCTS).doc(product.id).get();
+    if (freshDoc.exists) {
+      product = { id: freshDoc.id, ...freshDoc.data() };
+    }
+  } catch (e) { /* 讀取失敗時沿用既有資料，不阻擋購買 */ }
+
+  if (isStyleSoldOut(product, selectedStyle)) {
+    showToast('很抱歉，這個款式剛好賣完了，頁面將重新整理');
+    setTimeout(() => location.reload(), 1500);
+    return;
+  }
+  const maxStock = getAvailableStock(product, selectedStyle);
+  if (maxStock !== null && qty > maxStock) {
+    showToast(`庫存只剩 ${maxStock} 件，已自動調整數量`);
+    qty = maxStock;
+    document.getElementById('qtyNum').textContent = qty;
+    return;
+  }
+
   const isFirstTime = !hasSeenFirstCartReminder();
 
   if (isFirstTime) {
@@ -224,7 +283,8 @@ function doAddToCart() {
     price: product.price,
     style: selectedStyle || '',
     qty: qty,
-    image: (product.images && product.images[0]) || ''
+    image: (product.images && product.images[0]) || '',
+    stockType: product.stockType || 'instock'
   });
   refreshCartBadge();
   showToast(`已加入購物車：${product.name} x${qty}`);

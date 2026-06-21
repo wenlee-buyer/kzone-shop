@@ -24,7 +24,7 @@ function applyWatermark(file, watermarkText = 'k.zone.buying') {
 
         // 繪製斜體多行半透明浮水印
         ctx.save();
-        ctx.globalAlpha = 0.22;
+        ctx.globalAlpha = 0.12;
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = 'rgba(0,0,0,0.15)';
         ctx.font = `italic 700 ${Math.max(14, w * 0.045)}px sans-serif`;
@@ -121,12 +121,15 @@ function renderProductCard(product, watermarkText) {
   const imgHtml = imgUrl
     ? `<img src="${imgUrl}" alt="${escapeHtml(product.name)}" loading="lazy">`
     : `${icon('photo', 30)}`;
+  const soldOut = isProductSoldOut(product);
+  const soldOutOverlay = soldOut ? `<div class="sold-out-overlay">已售完</div>` : '';
 
   return `
     <div class="pcard" data-id="${product.id}" onclick="goToProduct('${product.id}')">
       <div class="pimg">
         ${imgHtml}
         <span class="${badgeClass}">${badgeText}</span>
+        ${soldOutOverlay}
       </div>
       <div class="pinfo">
         <div class="pname">${escapeHtml(product.name)}</div>
@@ -157,6 +160,91 @@ function showToast(msg, duration = 2200) {
   toast.textContent = msg;
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), duration);
+}
+
+// ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock}物件陣列）----
+function normalizeStyles(styles) {
+  if (!styles || !Array.isArray(styles)) return [];
+  return styles.map(s => {
+    if (typeof s === 'string') return { name: s, stock: null };
+    return { name: s.name || '', stock: s.stock ?? null };
+  }).filter(s => s.name);
+}
+
+// ---- 庫存/售完判斷共用邏輯 ----
+// 商品本身是否完全售完（所有款式都賣完，或無款式商品本身庫存為0）
+function isProductSoldOut(product) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0) {
+    return styles.every(s => s.stock !== null && s.stock !== undefined && s.stock <= 0);
+  }
+  if (product.stock === null || product.stock === undefined) return false; // 不限制庫存
+  return product.stock <= 0;
+}
+
+// 指定款式（或無款式商品本身）是否售完
+function isStyleSoldOut(product, styleName) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0) {
+    const style = styles.find(s => s.name === styleName);
+    if (!style) return false;
+    return style.stock !== null && style.stock !== undefined && style.stock <= 0;
+  }
+  if (product.stock === null || product.stock === undefined) return false;
+  return product.stock <= 0;
+}
+
+// 取得指定款式（或無款式商品）目前剩餘庫存，null 表示不限制
+function getAvailableStock(product, styleName) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0) {
+    const style = styles.find(s => s.name === styleName);
+    return style ? style.stock : null;
+  }
+  return product.stock;
+}
+
+// ---- 結帳時扣減庫存（用 Transaction 確保多人同時下單不會扣錯）----
+// cartItems: [{ productId, style, qty, name }]
+async function deductStockForOrder(cartItems) {
+  // 同一個商品在購物車可能出現多次（不同款式），先依商品分組減少讀取次數
+  const productIds = [...new Set(cartItems.map(i => i.productId))];
+
+  await db.runTransaction(async (tx) => {
+    const productDocs = {};
+    for (const pid of productIds) {
+      const ref = db.collection(COL.PRODUCTS).doc(pid);
+      const doc = await tx.get(ref);
+      if (doc.exists) productDocs[pid] = { ref, data: doc.data() };
+    }
+
+    for (const pid of productIds) {
+      const entry = productDocs[pid];
+      if (entry) {
+        entry.data.styles = normalizeStyles(entry.data.styles);
+      }
+    }
+
+    for (const item of cartItems) {
+      const entry = productDocs[item.productId];
+      if (!entry) continue;
+      const data = entry.data;
+
+      if (data.styles && data.styles.length > 0) {
+        const styleIdx = data.styles.findIndex(s => s.name === item.style);
+        if (styleIdx !== -1 && data.styles[styleIdx].stock !== null && data.styles[styleIdx].stock !== undefined) {
+          data.styles[styleIdx].stock = Math.max(0, data.styles[styleIdx].stock - item.qty);
+        }
+      } else if (data.stock !== null && data.stock !== undefined) {
+        data.stock = Math.max(0, data.stock - item.qty);
+      }
+    }
+
+    for (const pid of productIds) {
+      const entry = productDocs[pid];
+      if (entry) tx.update(entry.ref, { styles: entry.data.styles || [], stock: entry.data.stock ?? null });
+    }
+  });
 }
 
 // ---- 更新購物車數字徽章（所有頁面共用）----

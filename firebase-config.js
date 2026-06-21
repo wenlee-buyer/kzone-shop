@@ -139,6 +139,15 @@ function saveCart(cart) {
   localStorage.setItem(CART_KEY, JSON.stringify(cart));
 }
 
+function clearCart() {
+  localStorage.removeItem(CART_KEY);
+}
+
+// 運費規則：滿3000免運，其他一律38元（賣貨便超商代收固定優惠價）
+function calcShippingFee(orderTotal) {
+  return orderTotal >= 3000 ? 0 : 38;
+}
+
 function addToCart(item) {
   const cart = getCart();
   const existing = cart.find(c => c.productId === item.productId && c.style === item.style);

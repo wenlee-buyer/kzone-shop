@@ -103,6 +103,10 @@
   <div class="logo-title">K.Zone 日韓代購</div>
   <p>韓國空運直送・楓之谷周邊代購專門店</p>
   <p style="margin-top:10px; opacity:0.6">© 2026 K.Zone Buying</p>
+  <div class="trademark-notice">
+    MapleStory® and related characters are trademarks of NEXON.<br>
+    本站僅販售官方正版商品，相關角色著作權與商標權歸 NEXON 所有。
+  </div>
 </div>
 
 <a href="cart.html" class="cart-fab" aria-label="購物車">
@@ -168,6 +172,7 @@ function applySettings() {
 function renderCategoryNav() {
   const list = document.getElementById('srcNavList');
   let html = `<button class="sn-item active" data-cat="all">全部</button>`;
+  html += `<button class="sn-item" data-cat="new">✨ 最新上架</button>`;
   categories.forEach(cat => {
     html += `<button class="sn-item" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
   });
@@ -240,7 +245,13 @@ async function loadProducts() {
 function filterAndRender() {
   let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
 
-  if (currentCatFilter !== 'all') {
+  if (currentCatFilter === 'new') {
+    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    filtered = filtered.filter(p => {
+      const createdAt = p.createdAt?.toDate ? p.createdAt.toDate().getTime() : null;
+      return createdAt !== null && createdAt >= fourteenDaysAgo;
+    });
+  } else if (currentCatFilter !== 'all') {
     filtered = filtered.filter(p => p.categoryId === currentCatFilter);
   }
   if (activeTagFilters.size > 0) {

@@ -4,6 +4,7 @@
 
 let productsPageState = {
   filterArchived: false,
+  filterSoldOut: false,
   filterCat: 'all',
   editingProduct: null,
   pendingImages: [] // { blob, dataUrl, url(已上傳後) }
@@ -18,6 +19,7 @@ async function renderProductsPage() {
         <div class="admin-subtitle">新增、編輯、封存你的商品</div>
       </div>
       <div class="admin-btn-row">
+        <button class="btn-secondary" id="toggleSoldOutBtn" style="width:auto">查看已售完商品</button>
         <button class="btn-secondary" id="toggleArchivedBtn" style="width:auto">查看已封存商品</button>
         <button class="btn-primary" id="addProductBtn" style="width:auto">+ 新增商品</button>
       </div>
@@ -50,7 +52,14 @@ async function renderProductsPage() {
   document.getElementById('addProductBtn').addEventListener('click', () => openProductEditor(null));
   document.getElementById('toggleArchivedBtn').addEventListener('click', (e) => {
     productsPageState.filterArchived = !productsPageState.filterArchived;
+    productsPageState.filterSoldOut = false;
+    document.getElementById('toggleSoldOutBtn').textContent = '查看已售完商品';
     e.target.textContent = productsPageState.filterArchived ? '查看上架中商品' : '查看已封存商品';
+    loadAndRenderProductsTable();
+  });
+  document.getElementById('toggleSoldOutBtn').addEventListener('click', (e) => {
+    productsPageState.filterSoldOut = !productsPageState.filterSoldOut;
+    e.target.textContent = productsPageState.filterSoldOut ? '查看全部商品' : '查看已售完商品';
     loadAndRenderProductsTable();
   });
 
@@ -69,6 +78,9 @@ async function loadAndRenderProductsTable() {
     if (productsPageState.filterCat !== 'all') {
       products = products.filter(p => p.categoryId === productsPageState.filterCat);
     }
+    if (productsPageState.filterSoldOut) {
+      products = products.filter(p => isProductSoldOut(p));
+    }
 
     if (products.length === 0) {
       wrap.innerHTML = `<div class="empty-state">${icon('package-off', 18)}目前沒有商品</div>`;
@@ -79,7 +91,7 @@ async function loadAndRenderProductsTable() {
       <table class="admin-table">
         <thead>
           <tr>
-            <th>圖片</th><th>名稱</th><th>來源</th><th>狀態</th><th>價格</th><th>款式</th><th>操作</th>
+            <th>圖片</th><th>名稱</th><th>來源</th><th>狀態</th><th>價格</th><th>款式／庫存</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -101,21 +113,34 @@ async function loadAndRenderProductsTable() {
 }
 
 function renderProductRow(p) {
+  const styles = normalizeStyles(p.styles);
   const cat = appState.categories.find(c => c.id === p.categoryId);
   const stockPill = p.stockType === 'preorder'
     ? `<span class="pill pill-preorder">預購</span>`
     : `<span class="pill pill-instock">現貨</span>`;
   const archivedPill = p.archived ? `<span class="pill pill-archived" style="margin-left:4px">已封存</span>` : '';
+  const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33;margin-left:4px">已售完</span>` : '';
   const img = (p.images && p.images[0]) || '';
+
+  let stockInfo = '不限制';
+  if (styles.length > 0) {
+    stockInfo = styles.map(s => {
+      const soldOut = s.stock !== null && s.stock !== undefined && s.stock <= 0;
+      const stockText = s.stock === null || s.stock === undefined ? '不限' : s.stock;
+      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}`;
+    }).join('<br>');
+  } else if (p.stock !== null && p.stock !== undefined) {
+    stockInfo = `庫存：${p.stock}`;
+  }
 
   return `
     <tr>
       <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
       <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
       <td>${cat ? escapeHtml(cat.name) : '-'}</td>
-      <td>${stockPill}${archivedPill}</td>
+      <td>${stockPill}${archivedPill}${soldOutPill}</td>
       <td>${formatPrice(p.price)}</td>
-      <td>${p.styles && p.styles.length ? p.styles.length + ' 款' : '無'}</td>
+      <td style="font-size:11px">${stockInfo}</td>
       <td>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
           <button class="btn-icon" id="edit-${p.id}" title="編輯">編輯</button>
@@ -170,7 +195,7 @@ function openProductEditor(product) {
         </div>
 
         <div class="field">
-          <label class="field-label">商品圖片（最多6張，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印）</label>
+          <label class="field-label">商品圖片（最多6張，建議1080x1080正方形圖。非正方形圖片會自動跳出裁切視窗，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印）</label>
           <div class="img-upload-zone" id="pasteZone" tabindex="0">
             ${icon('photo-plus', 26)}
             點此區塊後按 Ctrl+V 貼上截圖，或點擊下方按鈕選擇檔案
@@ -205,13 +230,13 @@ function openProductEditor(product) {
           <input type="number" id="pf_price" value="${product?.price || ''}" placeholder="0">
         </div>
 
-        <div class="field">
-          <label class="field-label">數量／庫存（選填，目前不影響前台購買）</label>
+        <div class="field" id="pf_simpleStockField">
+          <label class="field-label">數量／庫存（選填，留空表示不限制。賣完會自動顯示「已售完」）</label>
           <input type="number" id="pf_stock" value="${product?.stock ?? ''}" placeholder="例：10">
         </div>
 
         <div class="field">
-          <label class="field-label">款式（純文字，不同款式同價，可新增多個）</label>
+          <label class="field-label">款式（純文字，不同款式同價，可新增多個。新增款式後，庫存會改成各款式分開計算）</label>
           <div id="pf_stylesList"></div>
           <button class="btn-secondary" id="pf_addStyleBtn" style="margin-top:4px">+ 新增款式</button>
         </div>
@@ -227,34 +252,50 @@ function openProductEditor(product) {
   `;
   document.body.appendChild(overlay);
 
-  // 款式列表渲染
+  // 款式列表渲染（每個款式可各自設定庫存；相容舊資料：舊版 styles 是純字串陣列）
   const stylesListEl = document.getElementById('pf_stylesList');
-  let styles = product?.styles ? [...product.styles] : [];
+  let styles = (product?.styles || []).map(s => {
+    if (typeof s === 'string') return { name: s, stock: '' };
+    return { name: s.name || '', stock: s.stock ?? '' };
+  });
+
+  function toggleSimpleStockVisibility() {
+    document.getElementById('pf_simpleStockField').style.display = styles.length > 0 ? 'none' : 'block';
+  }
 
   function renderStylesList() {
     stylesListEl.innerHTML = styles.map((s, i) => `
       <div class="style-input-row">
-        <input type="text" value="${escapeHtml(s)}" data-style-idx="${i}">
+        <input type="text" value="${escapeHtml(s.name)}" placeholder="款式名稱" data-style-name-idx="${i}" style="flex:2">
+        <input type="number" value="${escapeHtml(String(s.stock))}" placeholder="庫存(留空不限)" data-style-stock-idx="${i}" style="flex:1; min-width:0">
         <button class="btn-icon danger" data-remove-style="${i}">移除</button>
       </div>
     `).join('');
-    stylesListEl.querySelectorAll('[data-style-idx]').forEach(input => {
+    stylesListEl.querySelectorAll('[data-style-name-idx]').forEach(input => {
       input.addEventListener('input', (e) => {
-        styles[parseInt(e.target.dataset.styleIdx)] = e.target.value;
+        styles[parseInt(e.target.dataset.styleNameIdx)].name = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-stock-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.styleStockIdx)].stock = e.target.value;
       });
     });
     stylesListEl.querySelectorAll('[data-remove-style]').forEach(btn => {
       btn.addEventListener('click', () => {
         styles.splice(parseInt(btn.dataset.removeStyle), 1);
         renderStylesList();
+        toggleSimpleStockVisibility();
       });
     });
   }
   renderStylesList();
+  toggleSimpleStockVisibility();
 
   document.getElementById('pf_addStyleBtn').addEventListener('click', () => {
-    styles.push('');
+    styles.push({ name: '', stock: '' });
     renderStylesList();
+    toggleSimpleStockVisibility();
   });
 
   // 標籤複選
@@ -300,15 +341,98 @@ async function handleNewImageFile(file) {
     return;
   }
   try {
-    const settings = appState.settings;
-    const blob = await applyWatermark(file, settings.watermarkText || 'k.zone.buying');
-    const dataUrl = await blobToDataURL(blob);
-    productsPageState.pendingImages.push({ blob, dataUrl, uploaded: false });
-    renderImgThumbGrid();
+    const needsCrop = await checkNeedsCrop(file);
+    if (needsCrop) {
+      openCropModal(file);
+    } else {
+      await processAndAddImage(file);
+    }
   } catch (err) {
     console.error(err);
     showToast('圖片處理失敗，請再試一次');
   }
+}
+
+// 檢查圖片是否已經接近正方形（容許 3% 誤差），不是才需要裁切
+function checkNeedsCrop(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const ratio = img.width / img.height;
+      resolve(Math.abs(ratio - 1) > 0.03);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(false); };
+    img.src = url;
+  });
+}
+
+// 圖片裁切完成（或不需要裁切）後，統一走這裡：加浮水印 → 加進待上傳清單
+async function processAndAddImage(fileOrBlob) {
+  const settings = appState.settings;
+  const blob = await applyWatermark(fileOrBlob, settings.watermarkText || 'k.zone.buying');
+  const dataUrl = await blobToDataURL(blob);
+  productsPageState.pendingImages.push({ blob, dataUrl, uploaded: false });
+  renderImgThumbGrid();
+}
+
+let activeCropper = null;
+
+function openCropModal(file) {
+  const url = URL.createObjectURL(file);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'cropModalOverlay';
+  overlay.style.zIndex = '300';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">裁切圖片為正方形</span>
+        <button class="modal-close" id="closeCropModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--c-rose-text); margin-bottom:10px">這張圖片不是正方形，拖曳調整框選範圍，確認後會裁切成 1:1 比例</p>
+        <div style="max-height:60vh; overflow:hidden; background:#000; border-radius:8px">
+          <img id="cropTargetImg" src="${url}" style="display:block; max-width:100%">
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px">
+          <button class="btn-secondary" id="cancelCropBtn">取消這張圖片</button>
+          <button class="btn-primary" id="confirmCropBtn">確認裁切</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const imgEl = document.getElementById('cropTargetImg');
+  imgEl.onload = () => {
+    activeCropper = new Cropper(imgEl, {
+      aspectRatio: 1,
+      viewMode: 1,
+      autoCropArea: 1,
+      background: false
+    });
+  };
+
+  const cleanup = () => {
+    if (activeCropper) { activeCropper.destroy(); activeCropper = null; }
+    URL.revokeObjectURL(url);
+    overlay.remove();
+  };
+
+  document.getElementById('closeCropModal').addEventListener('click', cleanup);
+  document.getElementById('cancelCropBtn').addEventListener('click', cleanup);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+  document.getElementById('confirmCropBtn').addEventListener('click', () => {
+    if (!activeCropper) return;
+    const canvas = activeCropper.getCroppedCanvas({ width: 1080, height: 1080 });
+    canvas.toBlob(async (blob) => {
+      cleanup();
+      await processAndAddImage(blob);
+    }, 'image/jpeg', 0.92);
+  });
 }
 
 function renderImgThumbGrid() {
@@ -337,7 +461,9 @@ async function saveProduct(styles) {
   const recommendation = document.getElementById('pf_recommendation').value.trim();
   const stockType = document.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
-  const cleanStyles = styles.map(s => s.trim()).filter(s => s);
+  const cleanStyles = styles
+    .filter(s => s.name.trim())
+    .map(s => ({ name: s.name.trim(), stock: s.stock === '' || s.stock === null ? null : parseInt(s.stock) }));
 
   if (!name) { showToast('請輸入商品名稱'); return; }
   if (!categoryId) { showToast('請選擇來源分類'); return; }
@@ -361,7 +487,8 @@ async function saveProduct(styles) {
     }
 
     const productData = {
-      name, categoryId, price, stock, recommendation, stockType, tagIds,
+      name, categoryId, price, recommendation, stockType, tagIds,
+      stock: cleanStyles.length > 0 ? null : stock, // 有款式時改用各款式庫存，整體stock不使用
       styles: cleanStyles,
       images: imageUrls,
       archived: false,

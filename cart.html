@@ -122,18 +122,40 @@ function render() {
       <label class="field-label">請填入您的 LINE 名稱 <span style="color:var(--c-orange)">*</span></label>
       <input type="text" id="lineNameInput" placeholder="例：楓谷玩家小明">
     </div>
+  `;
 
-    <div class="checkout-note">
-      請按下方按鈕，我們會自動產生訂單圖片並下載，<br>
-      接著為您開啟 LINE 官方帳號，<br>
-      請將下載好的訂單圖片傳送給小編<br>
-      <strong>等待小編確認商品數量與金額後，才算下單成功！</strong>
-    </div>
+  const hasPreorder = cart.some(item => item.stockType === 'preorder');
 
-    <button class="btn-line" id="submitOrderBtn">
-      <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號
-    </button>
+  if (hasPreorder) {
+    html += `
+      <div class="checkout-note">
+        <strong>【訂單中含有預購商品】</strong><br>
+        請按下方按鈕，我們會自動產生訂單圖片並下載，<br>
+        接著為您開啟 LINE 官方帳號，<br>
+        請將下載好的訂單圖片傳送給小編<br>
+        <strong>等待小編確認商品數量與金額後，才算下單成功！</strong>
+      </div>
 
+      <button class="btn-line" id="submitOrderBtn">
+        <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號
+      </button>
+      <button class="btn-secondary" disabled style="margin-top:8px; opacity:0.4; cursor:not-allowed">結帳並填寫超商取貨資訊（含預購商品時無法使用）</button>
+    `;
+  } else {
+    html += `
+      <div class="checkout-note">
+        全部商品皆為現貨，請填寫超商取貨資訊以完成結帳，<br>
+        <strong>等待小編確認商品數量與金額後，才算下單成功！</strong>
+      </div>
+
+      <button class="btn-primary" id="openCvsFormBtn" style="background:var(--c-coffee)">結帳並填寫超商取貨資訊</button>
+      <button class="btn-secondary" disabled style="margin-top:8px; opacity:0.4; cursor:not-allowed">
+        <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號（無預購商品時無法使用）
+      </button>
+    `;
+  }
+
+  html += `
     <div class="line-block" style="border-color:var(--c-rose); margin-top:16px; margin-left:0; margin-right:0">
       <div class="line-logo" style="background:var(--c-coffee)">${icon('message-circle', 18)}</div>
       <div class="line-info">
@@ -142,10 +164,16 @@ function render() {
       </div>
       <a class="line-arrow" href="${settings.lineCommunityUrl}" target="_blank" aria-label="加入LINE社群">${icon('chevron-right', 18)}</a>
     </div>
+
+    <div class="trademark-notice">
+      MapleStory® and related characters are trademarks of NEXON.<br>
+      本站僅販售官方正版商品，相關角色著作權與商標權歸 NEXON 所有。
+    </div>
   `;
 
   container.innerHTML = html;
-  document.getElementById('submitOrderBtn').addEventListener('click', handleSubmitOrder);
+  document.getElementById('submitOrderBtn')?.addEventListener('click', handleSubmitOrder);
+  document.getElementById('openCvsFormBtn')?.addEventListener('click', openCvsForm);
 }
 
 function changeQty(idx, delta) {
@@ -188,11 +216,16 @@ async function handleSubmitOrder() {
 
     // 記錄訂單到 Firestore（給後台查看用）
     await db.collection(COL.ORDERS).add({
+      orderType: 'line',
       lineName: lineName,
       items: cart,
       total: cart.reduce((sum, item) => sum + item.price * item.qty, 0),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    await deductStockForOrder(cart);
+    clearCart();
+    refreshCartBadge();
 
     showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
 
@@ -259,6 +292,117 @@ async function generateAndDownloadOrderImage(cart, lineName) {
   link.download = `K.Zone訂單_${lineName}_${Date.now()}.png`;
   link.href = renderedCanvas.toDataURL('image/png');
   link.click();
+}
+
+// ============================================
+// 超商取貨結帳表單（現貨訂單專用）
+// ============================================
+function openCvsForm() {
+  const lineNameInput = document.getElementById('lineNameInput');
+  const lineName = lineNameInput.value.trim();
+  if (!lineName) {
+    showToast('請先填入您的 LINE 名稱');
+    lineNameInput.focus();
+    return;
+  }
+
+  const cart = getCart();
+  if (cart.length === 0) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'cvsFormOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">超商取貨資訊</span>
+        <button class="modal-close" id="closeCvsForm">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="field-label">取件人姓名 <span style="color:var(--c-orange)">*</span></label>
+          <input type="text" id="cvs_name" placeholder="姓名（10字以內，請勿含特殊符號）">
+        </div>
+        <div class="field">
+          <label class="field-label">取件人手機 <span style="color:var(--c-orange)">*</span></label>
+          <input type="text" id="cvs_phone" placeholder="例：0912345678（10碼數字）">
+        </div>
+        <div class="field">
+          <label class="field-label">取件門市（7-ELEVEN）<span style="color:var(--c-orange)">*</span></label>
+          <input type="text" id="cvs_store" placeholder="請輸入6碼門市店號">
+          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px">
+            請先至 <a href="https://emap.pcsc.com.tw/ecmap/default.aspx" target="_blank" style="color:var(--c-orange); text-decoration:underline">7-ELEVEN門市查詢系統</a> 查詢您要取件的門市店號後填入
+          </p>
+        </div>
+        <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
+          <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
+          <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>運費</span><span id="cvs_shipping"></span></div>
+          <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>應付總額（貨到付款）</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
+        </div>
+        <button class="btn-primary" id="confirmCvsBtn" style="margin-top:6px">確認送出訂單</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const shipping = calcShippingFee(total);
+  document.getElementById('cvs_subtotal').textContent = formatPrice(total);
+  document.getElementById('cvs_shipping').textContent = shipping === 0 ? '免運費' : formatPrice(shipping);
+  document.getElementById('cvs_total').textContent = formatPrice(total + shipping);
+
+  const close = () => overlay.remove();
+  document.getElementById('closeCvsForm').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay));
+}
+
+async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
+  const name = document.getElementById('cvs_name').value.trim();
+  const phone = document.getElementById('cvs_phone').value.trim();
+  const store = document.getElementById('cvs_store').value.trim();
+
+  if (!name) { showToast('請填寫取件人姓名'); return; }
+  if (!/^09\d{8}$/.test(phone)) { showToast('請填寫正確的10碼手機號碼'); return; }
+  if (!/^\d{6}$/.test(store)) { showToast('請填寫正確的6碼門市店號'); return; }
+
+  const btn = document.getElementById('confirmCvsBtn');
+  btn.disabled = true;
+  btn.textContent = '送出中...';
+
+  try {
+    const today = new Date();
+    const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+
+    await db.collection(COL.ORDERS).add({
+      orderType: 'cvs',
+      lineName: lineName,
+      cvsName: name,
+      cvsPhone: phone,
+      cvsStore: store,
+      items: cart,
+      subtotal: subtotal,
+      shippingFee: shipping,
+      total: subtotal + shipping,
+      orderDate: orderDateStr,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    await deductStockForOrder(cart);
+    clearCart();
+    refreshCartBadge();
+
+    overlay.remove();
+    showToast('訂單已送出！小編確認後會盡快為您安排出貨');
+    setTimeout(() => location.href = 'index.html', 1800);
+
+  } catch (err) {
+    console.error(err);
+    showToast('訂單送出失敗，請稍後再試');
+    btn.disabled = false;
+    btn.textContent = '確認送出訂單';
+  }
 }
 
 init();

@@ -52,6 +52,11 @@
   <button class="more-btn" id="loadMoreBtn" style="display:none; margin:0 auto">載入更多 <span class="ico" data-icon="chevron-down" data-size="18"></span></button>
 </div>
 
+<div class="trademark-notice" style="padding:0 16px 90px">
+  MapleStory® and related characters are trademarks of NEXON.<br>
+  本站僅販售官方正版商品，相關角色著作權與商標權歸 NEXON 所有。
+</div>
+
 <a href="cart.html" class="cart-fab" aria-label="購物車">
   <span class="ico" data-icon="shopping-cart" data-size="18"></span>
   <span class="cart-badge" style="display:none">0</span>
@@ -98,6 +103,7 @@ async function init() {
 function renderCategoryNav() {
   const list = document.getElementById('srcNavList');
   let html = `<button class="sn-item active" data-cat="all">全部</button>`;
+  html += `<button class="sn-item" data-cat="new">✨ 最新上架</button>`;
   categories.forEach(cat => {
     html += `<button class="sn-item" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
   });
@@ -169,7 +175,16 @@ async function loadProducts() {
 
 function filterAndRender() {
   let filtered = allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
-  if (currentCatFilter !== 'all') filtered = filtered.filter(p => p.categoryId === currentCatFilter);
+
+  if (currentCatFilter === 'new') {
+    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    filtered = filtered.filter(p => {
+      const createdAt = p.createdAt?.toDate ? p.createdAt.toDate().getTime() : null;
+      return createdAt !== null && createdAt >= fourteenDaysAgo;
+    });
+  } else if (currentCatFilter !== 'all') {
+    filtered = filtered.filter(p => p.categoryId === currentCatFilter);
+  }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
 
   const grid = document.getElementById('productGrid');
