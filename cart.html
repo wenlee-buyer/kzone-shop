@@ -341,15 +341,12 @@ function openCvsForm() {
           <input type="text" id="cvs_phone" placeholder="例：0912345678（10碼數字）">
         </div>
         <div class="field">
-          <label class="field-label">取件門市（7-ELEVEN）<span style="color:var(--c-orange)">*</span></label>
-          <input type="text" id="cvs_store" placeholder="請輸入6碼門市店號">
-          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px; line-height:1.6">
-            可至 <a href="https://emap.pcsc.com.tw/ecmap/default.aspx" target="_blank" style="color:var(--c-orange); text-decoration:underline">7-ELEVEN門市查詢系統</a> 查詢店號後填入。若連結開啟異常，也可填寫下方門市名稱，小編會協助核對店號。
-          </p>
+          <label class="field-label">取件門市名稱 <span style="color:var(--c-orange)">*</span></label>
+          <input type="text" id="cvs_storeName" placeholder="例：7-ELEVEN 楓谷門市">
         </div>
         <div class="field">
-          <label class="field-label">取件門市名稱（選填，輔助核對用）</label>
-          <input type="text" id="cvs_storeName" placeholder="例：7-ELEVEN 楓谷門市">
+          <label class="field-label">門市店號（6碼數字，選填）</label>
+          <input type="text" id="cvs_store" placeholder="例：123456（若不知道可由小編協助查詢）">
         </div>
         <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
@@ -383,7 +380,8 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
 
   if (!name) { showToast('請填寫取件人姓名'); return; }
   if (!/^09\d{8}$/.test(phone)) { showToast('請填寫正確的10碼手機號碼'); return; }
-  if (!/^\d{6}$/.test(store)) { showToast('請填寫正確的6碼門市店號'); return; }
+  if (!storeName) { showToast('請填寫取件門市名稱'); return; }
+  if (store && !/^\d{6}$/.test(store)) { showToast('門市店號格式不正確，請填寫6碼數字，或留空由小編協助查詢'); return; }
 
   const btn = document.getElementById('confirmCvsBtn');
   btn.disabled = true;
