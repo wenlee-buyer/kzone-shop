@@ -337,7 +337,7 @@ function openProductEditor(product) {
   });
 
   document.getElementById('closeProductModal').addEventListener('click', closeProductEditor);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeProductEditor(); });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeProductEditor(); });
   document.getElementById('pf_saveBtn').addEventListener('click', () => saveProduct(styles));
 }
 
@@ -404,8 +404,8 @@ function openCropModal(file) {
       </div>
       <div class="modal-body">
         <p style="font-size:12px; color:var(--c-rose-text); margin-bottom:10px">這張圖片不是正方形，拖曳調整框選範圍，確認後會裁切成 1:1 比例</p>
-        <div style="max-height:60vh; overflow:hidden; background:#000; border-radius:8px">
-          <img id="cropTargetImg" src="${url}" style="display:block; max-width:100%">
+        <div id="cropContainer" style="height:300px; overflow:hidden; background:#000; border-radius:8px; touch-action:none;">
+          <img id="cropTargetImg" src="${url}" style="display:block; max-width:100%; max-height:300px;">
         </div>
         <div style="display:flex; gap:8px; margin-top:14px">
           <button class="btn-secondary" id="cancelCropBtn">取消這張圖片</button>
@@ -416,15 +416,40 @@ function openCropModal(file) {
   `;
   document.body.appendChild(overlay);
 
+  // 手機修正1：阻止裁切容器內的所有觸控滾動事件傳遞到背景，避免頁面閃動
+  const cropContainer = document.getElementById('cropContainer');
+  cropContainer.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  cropContainer.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+
+  // 手機修正2：阻止 Modal 本身的滾動造成背景頁面跳動
+  overlay.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
   const imgEl = document.getElementById('cropTargetImg');
   imgEl.onload = () => {
     activeCropper = new Cropper(imgEl, {
       aspectRatio: 1,
       viewMode: 1,
-      autoCropArea: 1,
-      background: false
+      autoCropArea: 0.9,
+      background: false,
+      movable: true,
+      zoomable: true,
+      rotatable: false,
+      scalable: false,
+      // 手機修正3：使用 CSS transform 而非 transition，減少重排
+      transition: false,
+      // 手機修正4：明確指定容器大小，避免 Cropper 自行計算時造成重排
+      minContainerWidth: cropContainer.offsetWidth,
+      minContainerHeight: 300,
+      ready() {
+        // 初始化完成後再顯示，避免初始計算時的閃動
+        cropContainer.style.opacity = '1';
+      }
     });
   };
+
+  // 初始化時先隱藏，等 Cropper ready 再顯示
+  cropContainer.style.opacity = '0';
+  cropContainer.style.transition = 'opacity 0.15s ease';
 
   const cleanup = () => {
     if (activeCropper) { activeCropper.destroy(); activeCropper = null; }
@@ -434,7 +459,7 @@ function openCropModal(file) {
 
   document.getElementById('closeCropModal').addEventListener('click', cleanup);
   document.getElementById('cancelCropBtn').addEventListener('click', cleanup);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(); });
 
   document.getElementById('confirmCropBtn').addEventListener('click', () => {
     if (!activeCropper) return;
