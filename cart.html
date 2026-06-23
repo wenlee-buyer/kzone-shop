@@ -367,7 +367,7 @@ function openCvsForm() {
 
   const close = () => overlay.remove();
   document.getElementById('closeCvsForm').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
 
   document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay));
 }

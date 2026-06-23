@@ -313,7 +313,7 @@ function showFirstCartReminder(onConfirm) {
     close();
     onConfirm();
   });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
 }
 
 init();
