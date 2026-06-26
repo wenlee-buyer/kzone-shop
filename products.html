@@ -2,6 +2,14 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CK8064LZVR"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CK8064LZVR');
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>所有商品｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
@@ -186,7 +194,7 @@ function filterAndRender() {
       return createdAt !== null && createdAt >= fourteenDaysAgo;
     });
   } else if (currentCatFilter !== 'all') {
-    filtered = filtered.filter(p => p.categoryId === currentCatFilter);
+    filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
   }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
 
@@ -204,7 +212,7 @@ function filterAndRender() {
   }
 
   grid.innerHTML = display.map(p => {
-    const cat = categories.find(c => c.id === p.categoryId);
+    const cat = categories.find(c => getProductCategoryIds(p).includes(c.id));
     return renderProductCard({ ...p, categoryName: cat ? cat.name : '' }, settings.watermarkText);
   }).join('');
 

@@ -2,6 +2,14 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CK8064LZVR"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CK8064LZVR');
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>管理後台｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
@@ -28,6 +36,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
     <option value="tags">角色標籤</option>
     <option value="orders">訂單列表</option>
     <option value="import">同步匯入</option>
+    <option value="stats">流量統計</option>
     <option value="settings">網站設定</option>
   </select>
 </div>
@@ -43,6 +52,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
     <div class="admin-nav-item" data-page="tags"><span class="ico" data-icon="hash" data-size="18"></span>角色標籤</div>
     <div class="admin-nav-item" data-page="orders"><span class="ico" data-icon="clipboard-list" data-size="18"></span>訂單列表</div>
     <div class="admin-nav-item" data-page="import"><span class="ico" data-icon="refresh" data-size="18"></span>商品同步匯入</div>
+    <div class="admin-nav-item" data-page="stats"><span class="ico" data-icon="chart-bar" data-size="18"></span>流量統計</div>
     <div class="admin-nav-item" data-page="settings"><span class="ico" data-icon="settings" data-size="18"></span>網站設定</div>
     <div class="admin-nav-item" id="logoutBtn" style="margin-top:20px; border-top:0.5px solid var(--c-blush); padding-top:16px"><span class="ico" data-icon="logout" data-size="18"></span>登出</div>
     <a href="index.html" target="_blank" class="admin-nav-item" style="text-decoration:none"><span class="ico" data-icon="external-link" data-size="18"></span>查看前台網站</a>
@@ -62,6 +72,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
 <script src="assets/admin-categories.js"></script>
 <script src="assets/admin-orders.js"></script>
 <script src="assets/admin-import.js"></script>
+<script src="assets/admin-stats.js"></script>
 <script src="assets/admin-settings.js"></script>
 <script>
 let appState = {
@@ -94,6 +105,7 @@ const PAGE_RENDERERS = {
   tags: renderTagsPage,
   orders: renderOrdersPage,
   import: renderImportPage,
+  stats: renderStatsPage,
   settings: renderSettingsPage
 };
 

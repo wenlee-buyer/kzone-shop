@@ -2,6 +2,14 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CK8064LZVR"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CK8064LZVR');
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>商品詳情｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
@@ -115,11 +123,28 @@ async function init() {
 
   product = { id: prodDoc.id, ...prodDoc.data() };
   render();
+
+  // 非同步記錄商品點擊（不影響頁面載入速度，失敗也不影響使用者體驗）
+  recordProductView(product).catch(() => {});
+}
+
+async function recordProductView(product) {
+  const today = new Date();
+  const dateKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const statRef = db.collection('kzone_stats').doc(`${dateKey}_${product.id}`);
+  await statRef.set({
+    productId: product.id,
+    productName: product.name,
+    date: dateKey,
+    count: firebase.firestore.FieldValue.increment(1),
+    lastViewedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
 }
 
 function render() {
   product.styles = normalizeStyles(product.styles); // 相容舊格式資料
-  const cat = categories.find(c => c.id === product.categoryId);
+  const catIds = getProductCategoryIds(product);
+  const productCats = catIds.map(id => categories.find(c => c.id === id)).filter(Boolean);
   const productTags = (product.tagIds || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean);
   const images = product.images && product.images.length > 0 ? product.images : [];
   const stockBadgeText = product.stockType === 'preorder' ? '預購' : '現貨';
@@ -181,7 +206,7 @@ function render() {
       <div class="dtitle">${escapeHtml(product.name)}</div>
       <div class="dbadges">
         <span class="dbadge">${stockBadgeText}</span>
-        ${cat ? `<span class="dbadge">${escapeHtml(cat.name)}</span>` : ''}
+        ${productCats.map(c => `<span class="dbadge">${escapeHtml(c.name)}</span>`).join('')}
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
       <div class="dprice">${formatPrice(product.price)}</div>

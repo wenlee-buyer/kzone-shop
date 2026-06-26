@@ -143,6 +143,15 @@ function clearCart() {
   localStorage.removeItem(CART_KEY);
 }
 
+// 取得商品的所有來源分類ID（相容新格式 categoryIds 陣列與舊格式 categoryId 字串）
+function getProductCategoryIds(product) {
+  if (product.categoryIds && Array.isArray(product.categoryIds)) {
+    return product.categoryIds;
+  }
+  if (product.categoryId) return [product.categoryId];
+  return [];
+}
+
 // 運費規則：滿3000免運，其他一律38元（賣貨便超商代收固定優惠價）
 function calcShippingFee(orderTotal) {
   return orderTotal >= 3000 ? 0 : 38;

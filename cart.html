@@ -2,6 +2,14 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CK8064LZVR"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CK8064LZVR');
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>購物車｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
@@ -242,8 +250,10 @@ async function handleSubmitOrder() {
 
     showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
 
+    // 先開啟 LINE 官方帳號（新分頁），再跳轉到訂單完成頁
     setTimeout(() => {
-      location.href = settings.lineOfficialUrl;
+      window.open(settings.lineOfficialUrl, '_blank');
+      location.href = 'order-complete.html';
     }, 1200);
 
   } catch (err) {
@@ -412,7 +422,7 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
 
     overlay.remove();
     showToast('訂單已送出！小編確認後會盡快為您安排出貨');
-    setTimeout(() => location.href = 'index.html', 1800);
+    setTimeout(() => location.href = 'order-complete.html', 1800);
 
   } catch (err) {
     console.error(err);
