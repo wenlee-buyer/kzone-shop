@@ -76,7 +76,12 @@ async function loadAndRenderProductsTable() {
     let products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
     if (productsPageState.filterCat !== 'all') {
-      products = products.filter(p => p.categoryId === productsPageState.filterCat);
+      products = products.filter(p => {
+        if (p.categoryIds && Array.isArray(p.categoryIds)) {
+          return p.categoryIds.includes(productsPageState.filterCat);
+        }
+        return p.categoryId === productsPageState.filterCat; // 相容舊格式
+      });
     }
     if (productsPageState.filterSoldOut) {
       products = products.filter(p => isProductSoldOut(p));
@@ -114,7 +119,9 @@ async function loadAndRenderProductsTable() {
 
 function renderProductRow(p) {
   const styles = normalizeStyles(p.styles);
-  const cat = appState.categories.find(c => c.id === p.categoryId);
+  // 同時相容新格式(categoryIds陣列)和舊格式(categoryId字串)
+  const catIds = p.categoryIds && Array.isArray(p.categoryIds) ? p.categoryIds : (p.categoryId ? [p.categoryId] : []);
+  const catNames = catIds.map(id => appState.categories.find(c => c.id === id)?.name).filter(Boolean);
   const stockPill = p.stockType === 'preorder'
     ? `<span class="pill pill-preorder">預購</span>`
     : `<span class="pill pill-instock">現貨</span>`;
@@ -137,7 +144,7 @@ function renderProductRow(p) {
     <tr>
       <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
       <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
-      <td>${cat ? escapeHtml(cat.name) : '-'}</td>
+      <td style="white-space:normal">${catNames.length > 0 ? catNames.map(n => `<span class="pill pill-instock" style="margin:1px 2px; display:inline-block">${escapeHtml(n)}</span>`).join('') : '-'}</td>
       <td>${stockPill}${archivedPill}${soldOutPill}</td>
       <td>${formatPrice(p.price)}</td>
       <td style="font-size:11px">${stockInfo}</td>
@@ -178,10 +185,6 @@ function openProductEditor(product) {
   overlay.className = 'modal-overlay';
   overlay.id = 'productModalOverlay';
 
-  const catOptions = appState.categories.map(c =>
-    `<option value="${c.id}" ${product?.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
-  ).join('');
-
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:560px">
       <div class="modal-header">
@@ -217,8 +220,15 @@ function openProductEditor(product) {
         </div>
 
         <div class="field">
-          <label class="field-label">來源分類 *</label>
-          <select id="pf_category">${catOptions}</select>
+          <label class="field-label">來源分類（可複選）*</label>
+          <div class="tag-chip-list" id="pf_categoryChips">
+            ${appState.categories.map(c => {
+              const isSelected = product?.categoryIds
+                ? product.categoryIds.includes(c.id)
+                : (product?.categoryId === c.id); // 相容舊格式單一categoryId
+              return `<div class="tag-chip ${isSelected ? 'selected' : ''}" data-cat="${c.id}">${escapeHtml(c.name)}</div>`;
+            }).join('')}
+          </div>
         </div>
 
         <div class="field">
@@ -311,6 +321,11 @@ function openProductEditor(product) {
 
   // 標籤複選
   document.getElementById('pf_tagChips').querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('selected'));
+  });
+
+  // 來源分類複選
+  document.getElementById('pf_categoryChips').querySelectorAll('.tag-chip').forEach(chip => {
     chip.addEventListener('click', () => chip.classList.toggle('selected'));
   });
 
@@ -490,7 +505,7 @@ function renderImgThumbGrid() {
 
 async function saveProduct(styles) {
   const name = document.getElementById('pf_name').value.trim();
-  const categoryId = document.getElementById('pf_category').value;
+  const categoryIds = Array.from(document.getElementById('pf_categoryChips').querySelectorAll('.selected')).map(el => el.dataset.cat);
   const price = parseFloat(document.getElementById('pf_price').value);
   const stockVal = document.getElementById('pf_stock').value;
   const stock = stockVal === '' ? null : parseInt(stockVal);
@@ -505,7 +520,7 @@ async function saveProduct(styles) {
     .map(s => ({ name: s.name.trim(), stock: s.stock === '' || s.stock === null ? null : parseInt(s.stock) }));
 
   if (!name) { showToast('請輸入商品名稱'); return; }
-  if (!categoryId) { showToast('請選擇來源分類'); return; }
+  if (categoryIds.length === 0) { showToast('請至少選擇一個來源分類'); return; }
   if (isNaN(price) || price < 0) { showToast('請輸入正確的價格'); return; }
   if (productsPageState.pendingImages.length === 0) { showToast('請至少上傳一張商品圖片'); return; }
 
@@ -526,7 +541,7 @@ async function saveProduct(styles) {
     }
 
     const productData = {
-      name, categoryId, price, recommendation, stockType, tagIds,
+      name, categoryIds, price, recommendation, stockType, tagIds,
       featured, sortOrder,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,

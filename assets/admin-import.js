@@ -254,10 +254,11 @@ function showImportEditorForIndex(queue, index, results) {
     const name = document.getElementById('im_name').value.trim();
     const price = parseFloat(document.getElementById('im_price').value);
     const categoryId = document.getElementById('im_category').value;
+    const categoryIds = categoryId ? [categoryId] : [];
 
     if (!name) { showToast('請輸入商品名稱'); return; }
     if (isNaN(price) || price < 0) { showToast('請輸入正確的台幣售價'); return; }
-    if (!categoryId) { showToast('請選擇來源分類'); return; }
+    if (categoryIds.length === 0) { showToast('請選擇來源分類'); return; }
 
     const stockType = overlay.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
     const tagIds = Array.from(document.getElementById('im_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
@@ -265,7 +266,7 @@ function showImportEditorForIndex(queue, index, results) {
 
     results.push({
       sourceId: p.id,
-      name, price, categoryId, stockType, tagIds, recommendation,
+      name, price, categoryIds, stockType, tagIds, recommendation,
       images: p.img ? [p.img] : [],
       styles: [],
       stock: null,

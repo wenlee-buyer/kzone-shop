@@ -166,8 +166,6 @@ async function exportOrdersToExcel() {
     const rows = orders.map(o => {
       const date = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
       const dateStr = `${date.getFullYear()}/${date.getMonth()+1}/${date.getDate()}`;
-      const itemSummary = (o.items || []).map(i => `${i.name}${i.style ? '('+i.style+')' : ''}x${i.qty}`).join('、');
-      const storeNamePart = o.cvsStoreName ? `［門市名稱：${o.cvsStoreName}］` : '';
       return [
         o.cvsName || '',
         o.cvsPhone || '',
@@ -177,7 +175,7 @@ async function exportOrdersToExcel() {
         o.subtotal ?? o.total ?? 0,
         o.shippingFee ?? calcShippingFee(o.subtotal ?? o.total ?? 0),
         dateStr,
-        `${itemSummary}${storeNamePart}`,
+        o.cvsStoreName || '',
         `LINE：${o.lineName || ''}`
       ];
     });

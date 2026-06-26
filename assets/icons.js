@@ -39,7 +39,8 @@ const ICON_PATHS = {
   'archive': '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/>',
   'plus': '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   'x': '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
-  'message-circle': '<path d="M3 20l1.3-3.9A9 9 0 1 1 7.9 19.7L3 20Z"/>'
+  'message-circle': '<path d="M3 20l1.3-3.9A9 9 0 1 1 7.9 19.7L3 20Z"/>',
+  'chart-bar': '<rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/>'
 };
 
 function icon(name, size = 18, strokeWidth = 2) {
