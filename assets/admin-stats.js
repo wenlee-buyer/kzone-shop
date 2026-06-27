@@ -150,11 +150,11 @@ async function loadStats() {
 
       ${sorted.length > 5 ? `
         <div class="admin-card">
-          <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:12px">全部商品點擊排名</h3>
+          <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:12px">全部商品點擊排名（Top 15）</h3>
           <table class="admin-table">
             <thead><tr><th>排名</th><th>商品名稱</th><th>點擊次數</th></tr></thead>
             <tbody>
-              ${sorted.map((item, idx) => `
+              ${sorted.slice(0, 15).map((item, idx) => `
                 <tr>
                   <td style="color:var(--c-rose-text); font-size:12px">${idx + 1}</td>
                   <td style="font-size:13px">${escapeHtml(item.productName)}</td>

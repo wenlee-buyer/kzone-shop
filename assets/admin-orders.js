@@ -59,6 +59,7 @@ async function loadAndRenderOrders() {
 
     orders.forEach(order => {
       document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
+      document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
       document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
         const detail = document.getElementById(`detail-order-${order.id}`);
         detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
@@ -76,9 +77,22 @@ function renderOrderCard(order) {
   const dateStr = `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
   const itemCount = (order.items || []).reduce((sum, i) => sum + i.qty, 0);
   const isCvs = order.orderType === 'cvs';
+  const isShipped = !!order.shippedAt;
+
   const typePill = isCvs
     ? `<span class="pill pill-instock">超商取貨</span>`
     : `<span class="pill pill-preorder">LINE／含預購</span>`;
+
+  const shippedPill = isShipped
+    ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已出貨</span>`
+    : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待處理</span>`;
+
+  const shippedInfo = isShipped ? `
+    <div style="background:#f0fff4; border:0.5px solid #b2dfdb; border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:#1a5c2a; line-height:1.8">
+      ${icon('check', 14)} 已出貨・出貨日期：${escapeHtml(order.shippedAt || '')}
+      ${order.trackingNo ? `・ 超商單號：<strong>${escapeHtml(order.trackingNo)}</strong>` : ''}
+    </div>
+  ` : '';
 
   const cvsInfo = isCvs ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
@@ -88,15 +102,25 @@ function renderOrderCard(order) {
   ` : '';
 
   return `
-    <div style="border:0.5px solid var(--c-blush); border-radius:10px; margin-bottom:10px; overflow:hidden">
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:var(--c-cream)" id="toggle-order-${order.id}">
-        <div>
-          <div style="font-size:13px; font-weight:700; color:var(--c-coffee)">${icon('user', 18)}${escapeHtml(order.lineName || '未提供')} ${typePill}</div>
-          <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">${icon('clock', 18)}${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}</div>
+    <div style="border:1.5px solid ${isShipped ? '#b2dfdb' : 'var(--c-blush)'}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${isShipped ? '#f9fffe' : '#fff'}">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${isShipped ? '#edfaf6' : 'var(--c-cream)'}" id="toggle-order-${order.id}">
+        <div style="flex:1; min-width:0">
+          <div style="font-size:13px; font-weight:700; color:var(--c-coffee); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
+            ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${shippedPill}
+          </div>
+          <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
+            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}
+          </div>
         </div>
-        <button class="btn-icon danger" id="del-order-${order.id}" title="刪除此訂單" onclick="event.stopPropagation()">${icon('trash', 18)}</button>
+        <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
+          <button class="btn-icon ${isShipped ? '' : 'active-accent'}" id="ship-order-${order.id}" title="${isShipped ? '修改出貨資訊' : '標記出貨'}" style="font-size:11px; padding:6px 8px">
+            ${isShipped ? '修改出貨' : '標記出貨'}
+          </button>
+          <button class="btn-icon danger" id="del-order-${order.id}" title="刪除此訂單">${icon('trash', 14)}</button>
+        </div>
       </div>
       <div id="detail-order-${order.id}" style="display:none; padding:12px 14px">
+        ${shippedInfo}
         ${cvsInfo}
         ${(order.items || []).map(item => `
           <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:0.5px solid var(--c-blush); font-size:12px">
@@ -114,6 +138,88 @@ async function deleteOrder(orderId) {
   await db.collection(COL.ORDERS).doc(orderId).delete();
   showToast('訂單已刪除');
   loadAndRenderOrders();
+}
+
+// ============================================
+// 標記出貨 Modal
+// ============================================
+function openShipModal(order) {
+  const today = new Date().toISOString().slice(0, 10);
+  const isShipped = !!order.shippedAt;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'shipModalOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:420px">
+      <div class="modal-header">
+        <span class="modal-title">${isShipped ? '修改出貨資訊' : '標記出貨'}</span>
+        <button class="modal-close" id="closeShipModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:var(--c-coffee)">
+          訂單：${escapeHtml(order.lineName || '未提供')} ・ ${formatPrice(order.total)}
+        </div>
+        <div class="field">
+          <label class="field-label">出貨日期 *</label>
+          <input type="date" id="ship_date" value="${order.shippedAt || today}">
+        </div>
+        <div class="field">
+          <label class="field-label">超商單號（選填）</label>
+          <input type="text" id="ship_tracking" value="${order.trackingNo || ''}" placeholder="例：7110123456789">
+        </div>
+        ${isShipped ? `
+          <button class="btn-danger" id="cancelShipBtn" style="width:100%; margin-bottom:8px; padding:10px; border-radius:8px">取消出貨標記</button>
+        ` : ''}
+        <button class="btn-primary" id="confirmShipBtn">${isShipped ? '更新出貨資訊' : '確認標記出貨'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  document.getElementById('closeShipModal').addEventListener('click', close);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+
+  // 取消出貨標記
+  document.getElementById('cancelShipBtn')?.addEventListener('click', async () => {
+    if (!confirm('確定要取消這筆訂單的出貨標記嗎？')) return;
+    await db.collection(COL.ORDERS).doc(order.id).update({
+      shippedAt: firebase.firestore.FieldValue.delete(),
+      trackingNo: firebase.firestore.FieldValue.delete()
+    });
+    close();
+    showToast('已取消出貨標記');
+    loadAndRenderOrders();
+  });
+
+  // 確認出貨
+  document.getElementById('confirmShipBtn').addEventListener('click', async () => {
+    const shippedAt = document.getElementById('ship_date').value;
+    const trackingNo = document.getElementById('ship_tracking').value.trim();
+
+    if (!shippedAt) { showToast('請選擇出貨日期'); return; }
+
+    const btn = document.getElementById('confirmShipBtn');
+    btn.disabled = true;
+    btn.textContent = '儲存中...';
+
+    try {
+      const updateData = { shippedAt };
+      if (trackingNo) updateData.trackingNo = trackingNo;
+      else updateData.trackingNo = firebase.firestore.FieldValue.delete();
+
+      await db.collection(COL.ORDERS).doc(order.id).update(updateData);
+      close();
+      showToast('出貨資訊已儲存');
+      loadAndRenderOrders();
+    } catch (err) {
+      console.error(err);
+      showToast('儲存失敗，請稍後再試');
+      btn.disabled = false;
+      btn.textContent = isShipped ? '更新出貨資訊' : '確認標記出貨';
+    }
+  });
 }
 
 // ============================================
