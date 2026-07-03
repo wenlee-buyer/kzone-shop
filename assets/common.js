@@ -124,12 +124,19 @@ function renderProductCard(product, watermarkText) {
   const soldOut = isProductSoldOut(product);
   const soldOutOverlay = soldOut ? `<div class="sold-out-overlay">已售完</div>` : '';
 
+  // 判斷是否為14天內新上架（顯示NEW緞帶）
+  const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const createdAt = product.createdAt?.toDate ? product.createdAt.toDate().getTime() : null;
+  const isNew = createdAt !== null && createdAt >= fourteenDaysAgo;
+  const newRibbon = isNew && !soldOut ? `<div class="new-ribbon">NEW</div>` : '';
+
   return `
     <div class="pcard" data-id="${product.id}" onclick="goToProduct('${product.id}')">
       <div class="pimg">
         ${imgHtml}
         <span class="${badgeClass}">${badgeText}</span>
         ${soldOutOverlay}
+        ${newRibbon}
       </div>
       <div class="pinfo">
         <div class="pname">${escapeHtml(product.name)}</div>
