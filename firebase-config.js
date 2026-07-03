@@ -51,7 +51,7 @@ const DEFAULT_TAGS = [
 const DEFAULT_SETTINGS = {
   siteName: 'K.Zone 日韓代購',
   siteSubtitle: '你的專屬楓谷周邊補給所',
-  marqueeText: '🍁 韓國空運直送・品質保證・限量現貨 ・ 滿NT$1,000免運費',
+  marqueeText: '🍁 韓國空運直送・品質保證・限量現貨 ・ 滿NT$5,000免運費',
   heroTitle: '楓谷限定\n韓國直送',
   heroSubtitle: '最新周邊空運到台\n數量有限・先搶先贏！',
   heroImage: '', // 空字串 = 使用預設蘑菇插圖
@@ -152,9 +152,9 @@ function getProductCategoryIds(product) {
   return [];
 }
 
-// 運費規則：滿3000免運，其他一律38元（賣貨便超商代收固定優惠價）
+// 運費規則：滿5000免運，其他一律38元（賣貨便超商代收固定優惠價）
 function calcShippingFee(orderTotal) {
-  return orderTotal >= 3000 ? 0 : 38;
+  return orderTotal >= 5000 ? 0 : 38;
 }
 
 function addToCart(item) {
