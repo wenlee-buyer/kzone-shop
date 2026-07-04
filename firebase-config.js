@@ -152,9 +152,40 @@ function getProductCategoryIds(product) {
   return [];
 }
 
-// 運費規則：滿5000免運，其他一律38元（賣貨便超商代收固定優惠價）
+// 運費規則：滿5000免運，其他一律38元
 function calcShippingFee(orderTotal) {
   return orderTotal >= 5000 ? 0 : 38;
+}
+
+// 結帳前驗證購物車內所有商品的庫存是否仍然足夠
+// 回傳 null 表示全部通過，回傳陣列表示有問題的商品說明
+async function validateCartStock(cartItems) {
+  const productIds = [...new Set(cartItems.map(i => i.productId))];
+  const problems = [];
+
+  for (const pid of productIds) {
+    let freshData = null;
+    try {
+      const doc = await db.collection(COL.PRODUCTS).doc(pid).get();
+      if (doc.exists) freshData = { id: doc.id, ...doc.data() };
+    } catch (e) { continue; } // 讀取失敗不阻擋
+
+    if (!freshData) continue;
+    freshData.styles = normalizeStyles(freshData.styles);
+
+    const itemsForProduct = cartItems.filter(i => i.productId === pid);
+    for (const item of itemsForProduct) {
+      if (isStyleSoldOut(freshData, item.style)) {
+        problems.push(`「${item.name}${item.style ? '（'+item.style+'）' : ''}」已售完`);
+      } else {
+        const available = getAvailableStock(freshData, item.style);
+        if (available !== null && item.qty > available) {
+          problems.push(`「${item.name}${item.style ? '（'+item.style+'）' : ''}」庫存剩 ${available} 件，但您訂購了 ${item.qty} 件`);
+        }
+      }
+    }
+  }
+  return problems.length > 0 ? problems : null;
 }
 
 function addToCart(item) {

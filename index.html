@@ -262,12 +262,14 @@ function filterAndRender() {
       return createdAt !== null && createdAt >= fourteenDaysAgo;
     });
   } else if (currentCatFilter === 'all') {
-    // 首頁預設只顯示後台勾選「精選顯示在首頁」的商品；若完全沒有勾選任何商品，則退回顯示全部，避免首頁開天窗
+    // 首頁「全部」預設只顯示精選商品，若無精選則退回顯示全部
     const featuredOnly = filtered.filter(p => p.featured);
     filtered = featuredOnly.length > 0 ? featuredOnly : filtered;
   } else {
+    // 點選特定分類時，顯示該分類下所有商品，不受精選限制
     filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
   }
+
   if (activeTagFilters.size > 0) {
     filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
   }
@@ -275,12 +277,14 @@ function filterAndRender() {
   filtered.sort((a, b) => {
     const aSoldOut = isProductSoldOut(a) ? 1 : 0;
     const bSoldOut = isProductSoldOut(b) ? 1 : 0;
-    if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut; // 缺貨排後面
-    return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999); // 再依排序值排
+    if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut;
+    return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
   });
 
   const grid = document.getElementById('productGrid');
-  const display = filtered.slice(0, 12);
+  // 全部/標籤篩選：限12個並顯示「查看全部」；特定分類/最新上架：顯示全部不限制
+  const limitTo12 = (currentCatFilter === 'all' || currentCatFilter === 'new') && activeTagFilters.size === 0;
+  const display = limitTo12 ? filtered.slice(0, 12) : filtered;
 
   if (display.length === 0) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">${icon('mood-empty', 18)}目前沒有符合條件的商品</div>`;
@@ -291,6 +295,10 @@ function filterAndRender() {
     const cat = categories.find(c => getProductCategoryIds(p).includes(c.id));
     return renderProductCard({ ...p, categoryName: cat ? cat.name : '' }, settings.watermarkText);
   }).join('');
+
+  // 只有在顯示限制12個時才顯示「查看全部」按鈕
+  const moreRow = document.querySelector('.more-row');
+  if (moreRow) moreRow.style.display = limitTo12 ? '' : 'none';
 }
 
 init();

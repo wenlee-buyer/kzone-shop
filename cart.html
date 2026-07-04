@@ -230,9 +230,20 @@ async function handleSubmitOrder() {
 
   const btn = document.getElementById('submitOrderBtn');
   btn.disabled = true;
-  btn.innerHTML = `產生圖片中...`;
+  btn.innerHTML = `驗證庫存中...`;
 
   try {
+    // 結帳前最終庫存驗證
+    const stockProblems = await validateCartStock(cart);
+    if (stockProblems) {
+      showToast(`部分商品庫存不足：${stockProblems[0]}`);
+      btn.disabled = false;
+      btn.innerHTML = `<span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號`;
+      render(); // 重新渲染購物車，讓客人自行調整
+      return;
+    }
+
+    btn.innerHTML = `產生圖片中...`;
     await generateAndDownloadOrderImage(cart, lineName);
 
     // 記錄訂單到 Firestore（給後台查看用）
@@ -395,9 +406,21 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
 
   const btn = document.getElementById('confirmCvsBtn');
   btn.disabled = true;
-  btn.textContent = '送出中...';
+  btn.textContent = '驗證庫存中...';
 
   try {
+    // 結帳前最終庫存驗證
+    const stockProblems = await validateCartStock(cart);
+    if (stockProblems) {
+      showToast(`部分商品庫存不足：${stockProblems[0]}`);
+      btn.disabled = false;
+      btn.textContent = '確認送出訂單';
+      overlay.remove();
+      render(); // 重新渲染購物車
+      return;
+    }
+
+    btn.textContent = '送出中...';
     const today = new Date();
     const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
 
