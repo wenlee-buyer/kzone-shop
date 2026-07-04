@@ -128,10 +128,10 @@ function renderProductCard(product, watermarkText) {
   const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
   const createdAt = product.createdAt?.toDate ? product.createdAt.toDate().getTime() : null;
   const isNew = createdAt !== null && createdAt >= fourteenDaysAgo;
-  const newRibbon = isNew && !soldOut ? `<div class="new-ribbon">NEW</div>` : '';
+  const newRibbon = isNew && !soldOut ? `<div class="new-ribbon"></div>` : '';
 
   return `
-    <div class="pcard" data-id="${product.id}" onclick="goToProduct('${product.id}')">
+    <div class="pcard ${soldOut ? 'pcard-soldout' : ''}" data-id="${product.id}" ${soldOut ? '' : `onclick="goToProduct('${product.id}')"`}>
       <div class="pimg">
         ${imgHtml}
         <span class="${badgeClass}">${badgeText}</span>
@@ -141,7 +141,7 @@ function renderProductCard(product, watermarkText) {
       <div class="pinfo">
         <div class="pname">${escapeHtml(product.name)}</div>
         <div class="psrc">${escapeHtml(product.categoryName || '')}</div>
-        <div class="pprice">${formatPrice(product.price)}</div>
+        <div class="pprice" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${formatPrice(product.price)}</div>
       </div>
     </div>
   `;
