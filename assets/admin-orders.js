@@ -31,9 +31,32 @@ async function renderOrdersPage() {
       </div>
     </div>
 
-    <div class="admin-card">
-      <div id="ordersListWrap"><div class="loading-wrap"><div class="spin"></div>載入訂單中...</div></div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+      <div class="admin-card" style="margin-bottom:0">
+        <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
+          <span class="pill pill-instock">超商取貨</span> 現貨訂單
+        </h3>
+        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">貨到付款・可匯出賣貨便格式</p>
+        <div id="ordersListCvs"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
+      </div>
+      <div class="admin-card" style="margin-bottom:0">
+        <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
+          <span class="pill pill-preorder">LINE</span> 含預購訂單
+        </h3>
+        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">需透過 LINE 官方帳號確認</p>
+        <div id="ordersListLine"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
+      </div>
     </div>
+
+    <style>
+      @media (max-width: 860px) {
+        #ordersListCvs, #ordersListLine { }
+        #ordersListCvs { margin-bottom: 0; }
+      }
+      @media (max-width: 860px) {
+        .orders-two-col { grid-template-columns: 1fr !important; }
+      }
+    </style>
   `;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -45,31 +68,83 @@ async function renderOrdersPage() {
 }
 
 async function loadAndRenderOrders() {
-  const wrap = document.getElementById('ordersListWrap');
+  const cvs = document.getElementById('ordersListCvs');
+  const line = document.getElementById('ordersListLine');
   try {
-    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(100).get();
+    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
     const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    if (orders.length === 0) {
-      wrap.innerHTML = `<div class="empty-state">${icon('clipboard-off', 18)}目前還沒有任何訂單</div>`;
-      return;
-    }
+    const cvsOrders = orders.filter(o => o.orderType === 'cvs');
+    const lineOrders = orders.filter(o => o.orderType !== 'cvs');
 
-    wrap.innerHTML = orders.map(order => renderOrderCard(order)).join('');
-
-    orders.forEach(order => {
-      document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
-      document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
-      document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
-        const detail = document.getElementById(`detail-order-${order.id}`);
-        detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
-      });
-    });
+    renderOrderColumn(cvs, cvsOrders, 'cvs');
+    renderOrderColumn(line, lineOrders, 'line');
 
   } catch (err) {
     console.error(err);
-    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入訂單失敗</div>`;
+    const errMsg = `<div class="empty-state">${icon('alert-circle', 18)}載入訂單失敗</div>`;
+    if (cvs) cvs.innerHTML = errMsg;
+    if (line) line.innerHTML = errMsg;
   }
+}
+
+function renderOrderColumn(container, orders, colType) {
+  if (orders.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:30px 10px">${icon('clipboard-off', 18)}<p style="margin-top:8px">目前沒有訂單</p></div>`;
+    return;
+  }
+
+  // 分成待處理（未出貨）和已出貨兩組
+  const pending = orders.filter(o => !o.shippedAt);
+  const shipped = orders.filter(o => !!o.shippedAt);
+  const shippedVisible = shipped.slice(0, 10);
+  const shippedHidden = shipped.slice(10);
+
+  let html = '';
+
+  // 待處理訂單（全部顯示）
+  if (pending.length > 0) {
+    html += pending.map(order => renderOrderCard(order)).join('');
+  }
+
+  // 已出貨訂單（只顯示10筆，超過的摺疊）
+  if (shipped.length > 0) {
+    html += `<div style="border-top:1.5px dashed var(--c-blush); margin:12px 0 10px; padding-top:10px">
+      <div style="font-size:11px; color:var(--c-rose-text); margin-bottom:8px; display:flex; align-items:center; gap:6px">
+        ${icon('check', 12)} 已出貨（${shipped.length} 筆）
+      </div>
+      ${shippedVisible.map(order => renderOrderCard(order)).join('')}
+      ${shippedHidden.length > 0 ? `
+        <div id="shipped-more-${colType}" style="display:none">
+          ${shippedHidden.map(order => renderOrderCard(order)).join('')}
+        </div>
+        <button onclick="toggleShippedMore('${colType}')" id="shipped-toggle-${colType}"
+          style="width:100%; background:var(--c-cream); border:0.5px dashed var(--c-rose); color:var(--c-rose-text); border-radius:8px; padding:8px; font-size:12px; cursor:pointer; margin-top:4px">
+          查看更多已出貨訂單（還有 ${shippedHidden.length} 筆）
+        </button>
+      ` : ''}
+    </div>`;
+  }
+
+  container.innerHTML = html;
+
+  // 綁定所有訂單事件
+  orders.forEach(order => {
+    document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
+    document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
+    document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
+      const detail = document.getElementById(`detail-order-${order.id}`);
+      detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+    });
+  });
+}
+
+function toggleShippedMore(colType) {
+  const moreEl = document.getElementById(`shipped-more-${colType}`);
+  const btn = document.getElementById(`shipped-toggle-${colType}`);
+  const isHidden = moreEl.style.display === 'none';
+  moreEl.style.display = isHidden ? 'block' : 'none';
+  btn.textContent = isHidden ? '收起已出貨訂單' : `查看更多已出貨訂單（還有 ${moreEl.querySelectorAll('[id^="toggle-order-"]').length} 筆）`;
 }
 
 function renderOrderCard(order) {
