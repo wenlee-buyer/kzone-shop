@@ -80,3 +80,23 @@
   .admin-main { padding: 16px 16px 60px; }
   .admin-table { display: block; overflow-x: auto; white-space: nowrap; }
 }
+
+/* ---------- 首頁排序拖拉樣式 ---------- */
+.sort-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px; border-radius: 10px; margin-bottom: 6px;
+  background: #fff; border: 1px solid var(--c-blush);
+  cursor: grab; user-select: none; transition: box-shadow 0.15s ease;
+}
+.sort-item:active { cursor: grabbing; }
+.sort-dragging { opacity: 0.5; box-shadow: 0 4px 16px rgba(107,63,42,0.18); }
+.sort-over { border: 1.5px dashed var(--c-orange); background: #fff8f5; }
+.sort-handle { color: var(--c-rose); flex-shrink: 0; cursor: grab; }
+.sort-thumb { width: 48px; height: 48px; flex-shrink: 0; }
+.sort-info { flex: 1; min-width: 0; }
+.sort-order-num {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  background: var(--c-coffee); color: #fff;
+  font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
