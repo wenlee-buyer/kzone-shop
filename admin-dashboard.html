@@ -32,6 +32,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
   <div class="logo-title" style="font-size:15px">K.Zone 後台</div>
   <select id="mobileNavSelect">
     <option value="products">商品管理</option>
+    <option value="sort">首頁排序</option>
     <option value="categories">來源分類</option>
     <option value="tags">角色標籤</option>
     <option value="orders">訂單列表</option>
@@ -48,6 +49,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
       <p>管理你的楓谷代購商店</p>
     </div>
     <div class="admin-nav-item active" data-page="products"><span class="ico" data-icon="package" data-size="18"></span>商品管理</div>
+    <div class="admin-nav-item" data-page="sort"><span class="ico" data-icon="menu" data-size="18"></span>首頁排序</div>
     <div class="admin-nav-item" data-page="categories"><span class="ico" data-icon="tag" data-size="18"></span>來源分類</div>
     <div class="admin-nav-item" data-page="tags"><span class="ico" data-icon="hash" data-size="18"></span>角色標籤</div>
     <div class="admin-nav-item" data-page="orders"><span class="ico" data-icon="clipboard-list" data-size="18"></span>訂單列表</div>
@@ -72,6 +74,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
 <script src="assets/admin-categories.js"></script>
 <script src="assets/admin-orders.js"></script>
 <script src="assets/admin-import.js"></script>
+<script src="assets/admin-sort.js"></script>
 <script src="assets/admin-stats.js"></script>
 <script src="assets/admin-settings.js"></script>
 <script>
@@ -101,6 +104,7 @@ async function reloadCoreData() {
 
 const PAGE_RENDERERS = {
   products: renderProductsPage,
+  sort: renderSortPage,
   categories: renderCategoriesPage,
   tags: renderTagsPage,
   orders: renderOrdersPage,

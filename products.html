@@ -193,17 +193,23 @@ function filterAndRender() {
       const createdAt = p.createdAt?.toDate ? p.createdAt.toDate().getTime() : null;
       return createdAt !== null && createdAt >= fourteenDaysAgo;
     });
-  } else if (currentCatFilter !== 'all') {
-    filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
+    filtered.sort((a, b) => {
+      const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return tb - ta;
+    });
+  } else {
+    if (currentCatFilter !== 'all') {
+      filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
+    }
+    filtered.sort((a, b) => {
+      const aSoldOut = isProductSoldOut(a) ? 1 : 0;
+      const bSoldOut = isProductSoldOut(b) ? 1 : 0;
+      if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut;
+      return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+    });
   }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
-
-  filtered.sort((a, b) => {
-    const aSoldOut = isProductSoldOut(a) ? 1 : 0;
-    const bSoldOut = isProductSoldOut(b) ? 1 : 0;
-    if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut; // 缺貨排後面
-    return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999); // 再依排序值排
-  });
 
   const grid = document.getElementById('productGrid');
   document.getElementById('resultCount').textContent = `共 ${filtered.length} 項商品`;
