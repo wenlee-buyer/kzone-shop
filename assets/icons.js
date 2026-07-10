@@ -41,7 +41,9 @@ const ICON_PATHS = {
   'x': '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   'message-circle': '<path d="M3 20l1.3-3.9A9 9 0 1 1 7.9 19.7L3 20Z"/>',
   'chart-bar': '<rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/>',
-  'menu': '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'
+  'menu': '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+  'video': '<path d="m16 10 4.553-2.276A1 1 0 0 1 22 8.618v6.764a1 1 0 0 1-1.447.894L16 14"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  'player-play': '<circle cx="12" cy="12" r="10"/><path d="M10 8.75a1 1 0 0 1 1.5-.866l5 3.25a1 1 0 0 1 0 1.732l-5 3.25A1 1 0 0 1 10 15.25Z"/>'
 };
 
 function icon(name, size = 18, strokeWidth = 2) {

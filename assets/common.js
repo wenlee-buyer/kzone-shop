@@ -99,6 +99,29 @@ async function uploadImageToStorage(blob, pathPrefix = 'products') {
   return data.secure_url;
 }
 
+// 上傳短影片到 Cloudinary（resource_type=video），回傳網址。不加浮水印，也不做裁切。
+async function uploadVideoToStorage(file, pathPrefix = 'products') {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('folder', `kzone/${pathPrefix}`);
+  formData.append('resource_type', 'video');
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error('Cloudinary 影片上傳失敗:', errText);
+    throw new Error('影片上傳失敗，請稍後再試');
+  }
+
+  const data = await response.json();
+  return data.secure_url;
+}
+
 // ---- 處理剪貼簿貼上圖片（電腦版可直接 Ctrl+V）----
 function setupPasteListener(targetElement, onImagePasted) {
   targetElement.addEventListener('paste', async (e) => {
@@ -129,12 +152,14 @@ function renderProductCard(product, watermarkText) {
   const createdAt = product.createdAt?.toDate ? product.createdAt.toDate().getTime() : null;
   const isNew = createdAt !== null && createdAt >= fourteenDaysAgo;
   const newRibbon = isNew && !soldOut ? `<div class="new-ribbon"></div>` : '';
+  const videoBadge = product.video ? `<span class="pbadge" style="left:5px; right:auto; top:auto; bottom:5px; background:rgba(0,0,0,0.6)">${icon('video', 12)} 影片</span>` : '';
 
   return `
     <div class="pcard ${soldOut ? 'pcard-soldout' : ''}" data-id="${product.id}" ${soldOut ? '' : `onclick="goToProduct('${product.id}')"`}>
       <div class="pimg">
         ${imgHtml}
         <span class="${badgeClass}">${badgeText}</span>
+        ${videoBadge}
         ${soldOutOverlay}
         ${newRibbon}
       </div>

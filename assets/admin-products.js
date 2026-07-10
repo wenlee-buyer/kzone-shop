@@ -7,7 +7,8 @@ let productsPageState = {
   filterSoldOut: false,
   filterCat: 'all',
   editingProduct: null,
-  pendingImages: [] // { blob, dataUrl, url(已上傳後) }
+  pendingImages: [], // { blob, dataUrl, url(已上傳後) }，陣列順序 = 前台顯示順序（第一張是封面）
+  pendingVideo: null // { file, previewUrl, uploaded, url(已上傳後) } 或 null（沒有影片）
 };
 
 async function renderProductsPage() {
@@ -179,6 +180,7 @@ async function deleteProductPermanently(p) {
 function openProductEditor(product) {
   productsPageState.editingProduct = product;
   productsPageState.pendingImages = (product?.images || []).map(url => ({ url, dataUrl: url, uploaded: true }));
+  productsPageState.pendingVideo = product?.video ? { url: product.video, previewUrl: product.video, uploaded: true } : null;
 
   const isEdit = !!product;
   const overlay = document.createElement('div');
@@ -209,7 +211,7 @@ function openProductEditor(product) {
         </div>
 
         <div class="field">
-          <label class="field-label">商品圖片（最多6張，建議1080x1080正方形圖。非正方形圖片會自動跳出裁切視窗，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印）</label>
+          <label class="field-label">商品圖片（最多6張，建議1080x1080正方形圖。非正方形圖片會自動跳出裁切視窗，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印。拖曳縮圖可調整順序，第一張會是封面圖）</label>
           <div class="img-upload-zone" id="pasteZone" tabindex="0">
             ${icon('photo-plus', 26)}
             點此區塊後按 Ctrl+V 貼上截圖，或點擊下方按鈕選擇檔案
@@ -217,6 +219,13 @@ function openProductEditor(product) {
           <input type="file" id="pf_fileInput" accept="image/*" multiple style="display:none">
           <button class="btn-secondary" id="pf_chooseFileBtn" style="margin-top:8px">選擇圖片檔案上傳</button>
           <div class="img-thumb-grid" id="imgThumbGrid"></div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">商品短影片（選填，最多1支，建議20MB以內、直式或方形短影片，不會加浮水印）</label>
+          <div id="videoUploadWrap"></div>
+          <input type="file" id="pf_videoInput" accept="video/*" style="display:none">
+          <button class="btn-secondary" id="pf_chooseVideoBtn" style="margin-top:8px">選擇影片檔案上傳</button>
         </div>
 
         <div class="field">
@@ -351,6 +360,19 @@ function openProductEditor(product) {
     e.target.value = '';
   });
 
+  // 短影片上傳
+  renderVideoUploadArea();
+  document.getElementById('pf_chooseVideoBtn').addEventListener('click', () => {
+    document.getElementById('pf_videoInput').click();
+  });
+  document.getElementById('pf_videoInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    productsPageState.pendingVideo = { file, previewUrl: URL.createObjectURL(file), uploaded: false };
+    renderVideoUploadArea();
+  });
+
   document.getElementById('closeProductModal').addEventListener('click', closeProductEditor);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeProductEditor(); });
   document.getElementById('pf_saveBtn').addEventListener('click', () => saveProduct(styles));
@@ -358,7 +380,11 @@ function openProductEditor(product) {
 
 function closeProductEditor() {
   document.getElementById('productModalOverlay')?.remove();
+  if (productsPageState.pendingVideo && !productsPageState.pendingVideo.uploaded) {
+    URL.revokeObjectURL(productsPageState.pendingVideo.previewUrl);
+  }
   productsPageState.pendingImages = [];
+  productsPageState.pendingVideo = null;
 }
 
 async function handleNewImageFile(file) {
@@ -490,8 +516,9 @@ function renderImgThumbGrid() {
   const grid = document.getElementById('imgThumbGrid');
   if (!grid) return;
   grid.innerHTML = productsPageState.pendingImages.map((img, i) => `
-    <div class="img-thumb">
-      <img src="${img.dataUrl}">
+    <div class="img-thumb" draggable="true" data-img-idx="${i}" style="position:relative; cursor:grab">
+      <img src="${img.dataUrl}" style="pointer-events:none">
+      ${i === 0 ? `<span style="position:absolute; bottom:2px; left:2px; background:var(--c-orange); color:#fff; font-size:9px; padding:1px 5px; border-radius:5px; font-weight:700">封面</span>` : ''}
       <button class="img-thumb-remove" data-remove-img="${i}">×</button>
     </div>
   `).join('');
@@ -500,6 +527,56 @@ function renderImgThumbGrid() {
       productsPageState.pendingImages.splice(parseInt(btn.dataset.removeImg), 1);
       renderImgThumbGrid();
     });
+  });
+  initImgThumbDragReorder(grid);
+}
+
+// 拖曳圖片縮圖調整順序（第一張＝封面圖，前台商品卡與詳情頁主圖都用第一張）
+function initImgThumbDragReorder(grid) {
+  let dragIdx = null;
+  grid.querySelectorAll('[data-img-idx]').forEach(thumb => {
+    thumb.addEventListener('dragstart', (e) => {
+      dragIdx = parseInt(thumb.dataset.imgIdx);
+      e.dataTransfer.effectAllowed = 'move';
+      thumb.style.opacity = '0.4';
+    });
+    thumb.addEventListener('dragend', () => {
+      thumb.style.opacity = '1';
+    });
+    thumb.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    thumb.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const dropIdx = parseInt(thumb.dataset.imgIdx);
+      if (dragIdx === null || dragIdx === dropIdx) return;
+      const moved = productsPageState.pendingImages.splice(dragIdx, 1)[0];
+      productsPageState.pendingImages.splice(dropIdx, 0, moved);
+      dragIdx = null;
+      renderImgThumbGrid();
+    });
+  });
+}
+
+// ---- 商品短影片上傳區塊 ----
+function renderVideoUploadArea() {
+  const wrap = document.getElementById('videoUploadWrap');
+  if (!wrap) return;
+  const v = productsPageState.pendingVideo;
+  if (!v) {
+    wrap.innerHTML = `<div style="font-size:12px; color:var(--c-rose-text)">目前沒有上傳影片</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div style="position:relative; width:140px; margin-top:6px">
+      <video src="${escapeHtml(v.previewUrl)}" muted playsinline style="width:100%; border-radius:8px; background:#000; display:block"></video>
+      <button class="img-thumb-remove" id="removeVideoBtn" style="position:absolute; top:-6px; right:-6px">×</button>
+    </div>
+  `;
+  document.getElementById('removeVideoBtn').addEventListener('click', () => {
+    productsPageState.pendingVideo = null;
+    renderVideoUploadArea();
   });
 }
 
@@ -529,7 +606,7 @@ async function saveProduct(styles) {
   saveBtn.textContent = '儲存中...';
 
   try {
-    // 上傳尚未上傳過的圖片
+    // 上傳尚未上傳過的圖片（陣列順序就是前台顯示順序，第一張是封面）
     const imageUrls = [];
     for (const img of productsPageState.pendingImages) {
       if (img.uploaded && img.url) {
@@ -540,12 +617,22 @@ async function saveProduct(styles) {
       }
     }
 
+    // 上傳短影片（如果有新的、尚未上傳過的影片）
+    let videoUrl = null;
+    const pendingVideo = productsPageState.pendingVideo;
+    if (pendingVideo) {
+      videoUrl = (pendingVideo.uploaded && pendingVideo.url)
+        ? pendingVideo.url
+        : await uploadVideoToStorage(pendingVideo.file, 'products');
+    }
+
     const productData = {
       name, categoryIds, price, recommendation, stockType, tagIds,
       featured, sortOrder,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,
       images: imageUrls,
+      video: videoUrl,
       archived: false,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     };
