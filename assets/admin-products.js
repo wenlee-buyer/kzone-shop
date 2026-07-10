@@ -142,7 +142,7 @@ function renderProductRow(p) {
 
   return `
     <tr>
-      <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
+      <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
       <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
       <td style="white-space:normal">${catNames.length > 0 ? catNames.map(n => `<span class="pill pill-instock" style="margin:1px 2px; display:inline-block">${escapeHtml(n)}</span>`).join('') : '-'}</td>
       <td>${stockPill}${archivedPill}${soldOutPill}</td>

@@ -119,7 +119,7 @@ function renderProductCard(product, watermarkText) {
   const badgeText = product.stockType === 'preorder' ? '預購' : '現貨';
   const imgUrl = (product.images && product.images[0]) || '';
   const imgHtml = imgUrl
-    ? `<img src="${imgUrl}" alt="${escapeHtml(product.name)}" loading="lazy">`
+    ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(product.name)}" loading="lazy">`
     : `${icon('photo', 30)}`;
   const soldOut = isProductSoldOut(product);
   const soldOutOverlay = soldOut ? `<div class="sold-out-overlay">已售完</div>` : '';
@@ -169,6 +169,36 @@ function showToast(msg, duration = 2200) {
   setTimeout(() => toast.remove(), duration);
 }
 
+// ---- 「最新上架」與排序共用邏輯（index.html / products.html 共用，避免重複實作）----
+const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+// 商品是否為14天內新上架
+function isNewProduct(product) {
+  const createdAt = product.createdAt?.toDate ? product.createdAt.toDate().getTime() : null;
+  return createdAt !== null && createdAt >= (Date.now() - FOURTEEN_DAYS_MS);
+}
+
+// 從商品清單中篩出「最新上架」商品，並依上架時間新到舊排序
+function filterAndSortNewProducts(products) {
+  return products
+    .filter(isNewProduct)
+    .sort((a, b) => {
+      const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return tb - ta;
+    });
+}
+
+// 一般分類/全部商品的共用排序：依 sortOrder 排序，售完商品強制排到最後
+function sortBySortOrderSoldOutLast(products) {
+  return products.slice().sort((a, b) => {
+    const aSoldOut = isProductSoldOut(a) ? 1 : 0;
+    const bSoldOut = isProductSoldOut(b) ? 1 : 0;
+    if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut;
+    return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+  });
+}
+
 // ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock}物件陣列）----
 function normalizeStyles(styles) {
   if (!styles || !Array.isArray(styles)) return [];
@@ -211,8 +241,17 @@ function getAvailableStock(product, styleName) {
   return product.stock;
 }
 
-// ---- 結帳時扣減庫存（用 Transaction 確保多人同時下單不會扣錯）----
+// ---- 結帳時扣減庫存（用 Transaction 確保多人同時下單不會扣錯，且不會超賣）----
 // cartItems: [{ productId, style, qty, name }]
+// 若庫存不足，會 throw StockInsufficientError（交易自動 rollback，不會扣到一半）
+class StockInsufficientError extends Error {
+  constructor(problems) {
+    super('庫存不足，無法完成結帳');
+    this.name = 'StockInsufficientError';
+    this.problems = problems; // 陣列，內容為造成問題的商品說明文字
+  }
+}
+
 async function deductStockForOrder(cartItems) {
   // 同一個商品在購物車可能出現多次（不同款式），先依商品分組減少讀取次數
   const productIds = [...new Set(cartItems.map(i => i.productId))];
@@ -232,6 +271,29 @@ async function deductStockForOrder(cartItems) {
       }
     }
 
+    // 先用交易內讀到的「最新」資料完整檢查一輪，任何一項不夠就整筆中止（rollback），
+    // 避免同時有多筆結帳時，先前的 validateCartStock 預檢查結果已經過期
+    const problems = [];
+    for (const item of cartItems) {
+      const entry = productDocs[item.productId];
+      if (!entry) continue;
+      const data = entry.data;
+
+      if (data.styles && data.styles.length > 0) {
+        const styleIdx = data.styles.findIndex(s => s.name === item.style);
+        if (styleIdx === -1) continue;
+        const stock = data.styles[styleIdx].stock;
+        if (stock !== null && stock !== undefined && item.qty > stock) {
+          problems.push(`「${item.name}${item.style ? '（'+item.style+'）' : ''}」庫存剩 ${stock} 件，但訂購了 ${item.qty} 件`);
+        }
+      } else if (data.stock !== null && data.stock !== undefined && item.qty > data.stock) {
+        problems.push(`「${item.name}」庫存剩 ${data.stock} 件，但訂購了 ${item.qty} 件`);
+      }
+    }
+    if (problems.length > 0) {
+      throw new StockInsufficientError(problems);
+    }
+
     for (const item of cartItems) {
       const entry = productDocs[item.productId];
       if (!entry) continue;
@@ -240,10 +302,10 @@ async function deductStockForOrder(cartItems) {
       if (data.styles && data.styles.length > 0) {
         const styleIdx = data.styles.findIndex(s => s.name === item.style);
         if (styleIdx !== -1 && data.styles[styleIdx].stock !== null && data.styles[styleIdx].stock !== undefined) {
-          data.styles[styleIdx].stock = Math.max(0, data.styles[styleIdx].stock - item.qty);
+          data.styles[styleIdx].stock = data.styles[styleIdx].stock - item.qty;
         }
       } else if (data.stock !== null && data.stock !== undefined) {
-        data.stock = Math.max(0, data.stock - item.qty);
+        data.stock = data.stock - item.qty;
       }
     }
 
@@ -252,6 +314,14 @@ async function deductStockForOrder(cartItems) {
       if (entry) tx.update(entry.ref, { styles: entry.data.styles || [], stock: entry.data.stock ?? null });
     }
   });
+}
+
+// ---- 產生訂單編號（給客人截圖對照用，非資料庫 doc id）----
+function genOrderNo() {
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const rand = Math.floor(1000 + Math.random() * 9000); // 4碼隨機數字
+  return `K${ymd}${rand}`;
 }
 
 // ---- 更新購物車數字徽章（所有頁面共用）----

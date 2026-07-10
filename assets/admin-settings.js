@@ -47,7 +47,7 @@ async function renderSettingsPage() {
       <div class="field">
         <label class="field-label">主視覺圖片（不上傳則使用預設蘑菇插圖）</label>
         <div id="heroImgPreview" style="margin-bottom:10px">
-          ${s.heroImage ? `<img src="${s.heroImage}" style="width:100px; height:100px; object-fit:cover; border-radius:10px">` : `<div style="font-size:12px; color:var(--c-rose-text)">目前使用預設蘑菇插圖</div>`}
+          ${s.heroImage ? `<img src="${escapeHtml(s.heroImage)}" style="width:100px; height:100px; object-fit:cover; border-radius:10px">` : `<div style="font-size:12px; color:var(--c-rose-text)">目前使用預設蘑菇插圖</div>`}
         </div>
         <button class="btn-secondary" id="st_chooseHeroBtn" style="width:auto">上傳主視覺圖片</button>
         <input type="file" id="st_heroFileInput" accept="image/*" style="display:none">
@@ -89,8 +89,8 @@ async function renderSettingsPage() {
         <input type="text" id="st_watermarkText" value="${escapeHtml(s.watermarkText)}">
       </div>
       <div class="field">
-        <label class="field-label">後台管理密碼</label>
-        <input type="text" id="st_adminPassword" value="${escapeHtml(s.adminPassword)}">
+        <label class="field-label">後台管理密碼（密碼已加密儲存，不會顯示原文；留空表示不變更）</label>
+        <input type="text" id="st_adminPassword" value="" placeholder="輸入新密碼以變更，留空則維持原密碼">
       </div>
     </div>
 
@@ -143,9 +143,14 @@ async function saveAllSettings() {
       lineCommunityTitle: document.getElementById('st_lineCommunityTitle').value.trim(),
       lineCommunityText: document.getElementById('st_lineCommunityText').value,
       firstCartReminderText: document.getElementById('st_firstCartReminderText').value,
-      watermarkText: document.getElementById('st_watermarkText').value.trim(),
-      adminPassword: document.getElementById('st_adminPassword').value.trim()
+      watermarkText: document.getElementById('st_watermarkText').value.trim()
     };
+
+    // 密碼欄位留空 = 不變更；有輸入才雜湊後更新
+    const newPw = document.getElementById('st_adminPassword').value.trim();
+    if (newPw) {
+      newSettings.adminPassword = await sha256Hex(newPw);
+    }
 
     await db.collection(COL.SETTINGS).doc('main').set(newSettings, { merge: true });
     appState.settings = { ...appState.settings, ...newSettings };

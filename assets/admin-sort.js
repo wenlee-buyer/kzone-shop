@@ -39,6 +39,8 @@ async function renderSortPage() {
 
 async function loadSortableProducts() {
   try {
+    // 這裡疊加兩個 .where() 但沒有搭配 .orderBy()，Firestore 不需要額外複合索引，
+    // 所以不違反專案「where+orderBy 不同欄位需要建立索引」的限制，排序仍統一在下面用 JS 處理
     const snap = await db.collection(COL.PRODUCTS)
       .where('featured', '==', true)
       .where('archived', '==', false)
@@ -78,7 +80,7 @@ function renderSortableList() {
       <div class="sort-item" data-id="${p.id}" draggable="true">
         <div class="sort-handle">${icon('menu', 18)}</div>
         <div class="sort-thumb">
-          ${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<div style="width:100%;height:100%;background:var(--c-blush);border-radius:6px"></div>`}
+          ${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<div style="width:100%;height:100%;background:var(--c-blush);border-radius:6px"></div>`}
         </div>
         <div class="sort-info">
           <div style="font-size:13px; font-weight:500; color:var(--c-coffee)">${escapeHtml(p.name)}</div>

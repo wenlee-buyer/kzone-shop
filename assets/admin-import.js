@@ -134,7 +134,7 @@ function renderImportRow(p) {
     <label style="display:flex; align-items:center; gap:12px; padding:10px; border:0.5px solid var(--c-blush); border-radius:10px; margin-bottom:8px; cursor:pointer">
       <input type="checkbox" id="import-check-${p.id}" style="width:18px; height:18px; flex-shrink:0">
       <div style="width:44px; height:44px; border-radius:8px; overflow:hidden; background:var(--c-cream); flex-shrink:0">
-        ${p.img ? `<img src="${p.img}" style="width:100%;height:100%;object-fit:cover">` : ''}
+        ${p.img ? `<img src="${escapeHtml(p.img)}" style="width:100%;height:100%;object-fit:cover">` : ''}
       </div>
       <div style="flex:1; min-width:0">
         <div style="font-size:13px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name || '未命名商品')}</div>
@@ -181,7 +181,7 @@ function showImportEditorForIndex(queue, index, results) {
       <div class="modal-body">
         <div style="display:flex; gap:12px; align-items:center; margin-bottom:14px; padding:10px; background:var(--c-cream); border-radius:10px">
           <div style="width:50px; height:50px; border-radius:8px; overflow:hidden; flex-shrink:0; background:#fff">
-            ${p.img ? `<img src="${p.img}" style="width:100%;height:100%;object-fit:cover">` : ''}
+            ${p.img ? `<img src="${escapeHtml(p.img)}" style="width:100%;height:100%;object-fit:cover">` : ''}
           </div>
           <div style="font-size:13px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name || '未命名商品')}</div>
         </div>

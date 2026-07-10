@@ -174,7 +174,13 @@ function renderOrderCard(order) {
       取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
       商品小計：${formatPrice(order.subtotal)} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}
     </div>
-  ` : '';
+  ` : (order.cvsName ? `
+    <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
+      （預購客人已預填取貨資訊，供小編確認參考，最終以 LINE 溝通為準）<br>
+      取件人：${escapeHtml(order.cvsName)} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
+      商品小計：${formatPrice(order.subtotal)} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}
+    </div>
+  ` : '');
 
   return `
     <div style="border:1.5px solid ${isShipped ? '#b2dfdb' : 'var(--c-blush)'}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${isShipped ? '#f9fffe' : '#fff'}">
@@ -184,7 +190,7 @@ function renderOrderCard(order) {
             ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${shippedPill}
           </div>
           <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
-            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}
+            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}${order.orderNo ? ` ・ 編號：${escapeHtml(order.orderNo)}` : ''}
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
