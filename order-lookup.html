@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CK8064LZVR"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CK8064LZVR');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>訂單查詢｜K.Zone 日韓代購</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+.lookup-page { padding: 24px 16px 80px; max-width: 480px; margin: 0 auto; }
+.lookup-intro { font-size: 12px; color: var(--c-rose-text); line-height: 1.8; margin-bottom: 18px; text-align: center; }
+.lookup-card { background: #fff; border-radius: 14px; border: 0.5px solid var(--c-blush); padding: 20px; margin-bottom: 16px; }
+.lookup-result { border-radius: 14px; padding: 20px; margin-bottom: 16px; text-align: center; }
+.lookup-result.status-shipped { background: #f0fff4; border: 1px solid #b2dfdb; }
+.lookup-result.status-pending { background: #fff8f5; border: 1px solid var(--c-sand); }
+.lookup-result.status-notfound { background: #fff3f3; border: 1px solid #f0c0c0; }
+.lookup-result-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.lookup-result.status-shipped .lookup-result-title { color: #1a5c2a; }
+.lookup-result.status-pending .lookup-result-title { color: var(--c-coffee); }
+.lookup-result.status-notfound .lookup-result-title { color: #a33; }
+.lookup-result-line { font-size: 13px; color: var(--c-coffee); margin-top: 6px; }
+.lookup-contact-note { font-size: 12px; color: var(--c-rose-text); text-align: center; margin: 14px 0; line-height: 1.8; }
+.btn-line-big {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; width: 100%;
+  background: #06C755; color: #fff;
+  border: none; border-radius: 12px;
+  padding: 14px; font-size: 15px; font-weight: 700;
+  cursor: pointer; text-decoration: none;
+}
+</style>
+</head>
+<body>
+
+<div class="navbar">
+  <div class="container">
+    <a href="index.html" class="nav-icon-btn" aria-label="返回首頁" style="font-size:19px">
+      <span class="ico" data-icon="arrow-left" data-size="18"></span>
+    </a>
+    <div class="logo-wrap"><div class="logo-title" style="font-size:16px">訂單查詢</div></div>
+    <div style="width:32px"></div>
+  </div>
+</div>
+
+<div class="lookup-page">
+  <div class="lookup-intro">
+    輸入您的「結帳訂單編號」與「取件人手機號碼後4碼」，即可查詢目前出貨狀態。
+  </div>
+
+  <div class="lookup-card">
+    <div class="field">
+      <label class="field-label">訂單編號 <span style="color:var(--c-orange)">*</span></label>
+      <input type="text" id="lk_orderNo" placeholder="例：K202607109999">
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label class="field-label">手機號碼後4碼 <span style="color:var(--c-orange)">*</span></label>
+      <input type="text" id="lk_phoneLast4" placeholder="例：5678" maxlength="4" inputmode="numeric">
+    </div>
+    <button class="btn-primary" id="lookupBtn" style="margin-top:14px">查詢訂單</button>
+  </div>
+
+  <div id="lookupResultWrap"></div>
+
+  <div class="lookup-contact-note">
+    如有任何出貨相關問題，請透過下方 LINE 官方帳號聯繫小編
+  </div>
+  <a id="lineOfficialBtn" href="#" class="btn-line-big" target="_blank">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M19.365 9.89c.50 0 .866.37.866.82s-.366.82-.866.82H17.4v1.04h1.965c.5 0 .866.37.866.82s-.366.82-.866.82H16.534a.857.857 0 0 1-.866-.82V7.87c0-.453.366-.82.866-.82h2.831c.5 0 .866.37.866.82s-.366.82-.866.82H17.4v1.04h1.965Zm-5.198 3.3a.87.87 0 0 1-.591.23.889.889 0 0 1-.591-.23L11.15 11.3v1.73c0 .453-.366.82-.866.82s-.866-.367-.866-.82V7.87c0-.39.257-.724.617-.82a.875.875 0 0 1 .84.23l1.835 1.89V7.87c0-.453.366-.82.866-.82s.866.367.866.82v4.06a.809.809 0 0 1-.24.56Zm-5.998.59c0 .453-.366.82-.866.82s-.866-.367-.866-.82V7.87c0-.453.366-.82.866-.82s.866.367.866.82v5.91Zm-2.83 0c0 .453-.366.82-.866.82H2.642a.857.857 0 0 1-.866-.82V7.87c0-.453.366-.82.866-.82s.866.367.866.82v5.09h1.965c.5 0 .866.37.866.82ZM24 10.31C24 4.62 18.617 0 12 0S0 4.62 0 10.31c0 5.097 4.511 9.368 10.604 10.175.413.09.975.274 1.117.63.128.322.084.824.041 1.149l-.18 1.09c-.055.322-.255 1.26 1.105.687 1.36-.574 7.338-4.32 10.009-7.399C23.265 14.602 24 12.544 24 10.31Z"/>
+    </svg>
+    聯繫 LINE 官方小編
+  </a>
+
+  <div class="trademark-notice" style="margin-top:24px">
+    MapleStory® and related characters are trademarks of NEXON.<br>
+    本站僅販售官方正版商品，相關角色著作權與商標權歸 NEXON 所有。
+  </div>
+</div>
+
+<script src="firebase-config.js"></script>
+<script src="assets/icons.js"></script>
+<script>document.addEventListener("DOMContentLoaded", () => renderStaticIcons());</script>
+<script>
+async function init() {
+  try {
+    const settings = await getSettings();
+    const btn = document.getElementById('lineOfficialBtn');
+    if (settings.lineOfficialUrl) btn.href = settings.lineOfficialUrl;
+  } catch (e) {
+    // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
+  }
+}
+init();
+
+document.getElementById('lookupBtn').addEventListener('click', doLookup);
+document.getElementById('lk_orderNo').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLookup(); });
+document.getElementById('lk_phoneLast4').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLookup(); });
+
+async function doLookup() {
+  const orderNoInput = document.getElementById('lk_orderNo');
+  const phoneInput = document.getElementById('lk_phoneLast4');
+  const orderNo = orderNoInput.value.trim().toUpperCase();
+  const phoneLast4 = phoneInput.value.trim();
+  const resultWrap = document.getElementById('lookupResultWrap');
+
+  if (!orderNo) { showToastLite('請輸入訂單編號'); orderNoInput.focus(); return; }
+  if (!/^\d{4}$/.test(phoneLast4)) { showToastLite('請輸入手機號碼後4碼（4個數字）'); phoneInput.focus(); return; }
+
+  const btn = document.getElementById('lookupBtn');
+  btn.disabled = true;
+  btn.textContent = '查詢中...';
+  resultWrap.innerHTML = '';
+
+  try {
+    // 只用單一 where 條件查 orderNo，手機後4碼比對放在前端做，
+    // 避免需要額外複合索引，同時要求「訂單編號 + 手機後4碼」都對才能查到，降低被亂試撈到別人資料的風險
+    const snap = await db.collection(COL.ORDERS).where('orderNo', '==', orderNo).limit(1).get();
+
+    let matched = null;
+    if (!snap.empty) {
+      const doc = snap.docs[0];
+      const data = doc.data();
+      const phone = data.cvsPhone || '';
+      if (phone.slice(-4) === phoneLast4) {
+        matched = data;
+      }
+    }
+
+    if (!matched) {
+      resultWrap.innerHTML = `
+        <div class="lookup-result status-notfound">
+          <div class="lookup-result-title">查無此訂單</div>
+          <div class="lookup-result-line">請確認訂單編號與手機號碼後4碼是否正確</div>
+        </div>
+      `;
+      return;
+    }
+
+    const isShipped = !!matched.shippedAt;
+    if (isShipped) {
+      resultWrap.innerHTML = `
+        <div class="lookup-result status-shipped">
+          <div class="lookup-result-title">✅ 已出貨</div>
+          <div class="lookup-result-line">出貨日期：${escapeHtml(matched.shippedAt)}</div>
+          ${matched.trackingNo ? `<div class="lookup-result-line">超商單號：<strong>${escapeHtml(matched.trackingNo)}</strong></div>` : ''}
+        </div>
+      `;
+    } else {
+      resultWrap.innerHTML = `
+        <div class="lookup-result status-pending">
+          <div class="lookup-result-title">⏳ 待處理中</div>
+          <div class="lookup-result-line">訂單已收到，小編確認後會盡快安排出貨</div>
+        </div>
+      `;
+    }
+
+  } catch (err) {
+    console.error('訂單查詢失敗:', { orderNo, err });
+    resultWrap.innerHTML = `
+      <div class="lookup-result status-notfound">
+        <div class="lookup-result-title">查詢失敗</div>
+        <div class="lookup-result-line">請稍後再試，或直接透過 LINE 官方帳號詢問小編</div>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '查詢訂單';
+  }
+}
+
+// 這一頁刻意不載入 common.js（避免多載入用不到的購物車/商品邏輯），
+// 這裡自己補一個極簡版 escapeHtml 與 toast，行為與 common.js 的版本一致
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+function showToastLite(msg) {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2200);
+}
+</script>
+
+</body>
+</html>
