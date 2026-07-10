@@ -91,15 +91,20 @@
   </div>
 
   <div class="complete-title">訂單已送出！</div>
-  <div class="complete-sub">
+  <div class="complete-sub" id="completeSub">
     感謝您的訂購 🍄<br>
     小編確認商品數量與金額後<br>
     會盡快透過 LINE 與您聯繫
   </div>
 
+  <div class="notice-box" id="orderNoBox" style="display:none; text-align:center">
+    <h3 style="text-align:center">🎫 訂單編號</h3>
+    <p style="font-size:20px; font-weight:700; color:var(--c-orange); text-align:center; letter-spacing:1px" id="orderNoText"></p>
+  </div>
+
   <div class="notice-box">
     <h3>📋 訂單注意事項</h3>
-    <p>
+    <p id="orderNoticeText">
       ・ 預購商品需等小編確認後才算成立<br>
       ・ 現貨商品以實際庫存為準，若缺貨會主動通知<br>
       ・ 如有任何問題，請透過下方 LINE 官方帳號聯繫小編<br>
@@ -136,6 +141,42 @@ async function init() {
     }
   } catch (e) {
     // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
+  }
+
+  // 讀取剛剛結帳產生的訂單編號/類型（只用一次就清除，避免重整頁面又顯示舊資料）
+  try {
+    const raw = sessionStorage.getItem('kzone_last_order');
+    if (raw) {
+      const lastOrder = JSON.parse(raw);
+      sessionStorage.removeItem('kzone_last_order');
+
+      if (lastOrder.orderNo) {
+        document.getElementById('orderNoBox').style.display = 'block';
+        document.getElementById('orderNoText').textContent = lastOrder.orderNo;
+      }
+
+      if (lastOrder.orderType === 'cvs') {
+        document.getElementById('completeSub').innerHTML = `
+          感謝您的訂購 🍄<br>
+          現貨商品都會在2天內出貨<br>
+          請截圖此結帳訂單編號<br>
+          有任何問題將此編號發送給LINE官方小編
+        `;
+        document.getElementById('orderNoticeText').innerHTML = `
+          ・ 現貨商品將於2天內安排出貨<br>
+          ・ 如有任何問題，請將訂單編號截圖發送給 LINE 官方小編<br>
+          ・ 請保存本頁訂單編號，方便對照確認
+        `;
+      } else if (lastOrder.orderType === 'preorder') {
+        document.getElementById('completeSub').innerHTML = `
+          感謝您的訂購 🍄<br>
+          小編確認商品數量與金額後<br>
+          會盡快透過 LINE 與您聯繫
+        `;
+      }
+    }
+  } catch (e) {
+    console.error('讀取訂單編號失敗:', e);
   }
 }
 init();

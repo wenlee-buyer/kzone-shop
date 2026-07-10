@@ -104,7 +104,7 @@ function render() {
 
   let html = cart.map((item, idx) => `
     <div class="cart-item ${item.stockType === 'preorder' ? 'cart-item-preorder' : ''}">
-      <div class="ci-img">${item.image ? `<img src="${item.image}" alt="${escapeHtml(item.name)}">` : `${icon('photo', 18)}`}</div>
+      <div class="ci-img">${item.image ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}">` : `${icon('photo', 18)}`}</div>
       <div class="ci-info">
         <div class="ci-name">${escapeHtml(item.name)} ${item.stockType === 'preorder' ? '<span class="ci-preorder-tag">預購</span>' : ''}</div>
         ${item.style ? `<div class="ci-style">款式：${escapeHtml(item.style)}</div>` : ''}
@@ -141,16 +141,15 @@ function render() {
     html += `
       <div class="checkout-note">
         <strong>【訂單中含有預購商品】</strong><br>
-        請按下方按鈕，我們會自動產生訂單圖片並下載，<br>
+        請先填寫取貨資訊，我們會自動產生訂單圖片並下載，<br>
         接著為您開啟 LINE 官方帳號，<br>
         請將下載好的訂單圖片傳送給小編<br>
         <strong>等待小編確認商品數量與金額後，才算下單成功！</strong>
       </div>
 
-      <button class="btn-line" id="submitOrderBtn">
-        <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號
+      <button class="btn-line" id="openCvsFormBtn">
+        <span style="font-weight:700">LINE</span> 填寫取貨資訊並前往官方帳號
       </button>
-      <button class="btn-secondary" disabled style="margin-top:8px; opacity:0.4; cursor:not-allowed">結帳並填寫超商取貨資訊（含預購商品時無法使用）</button>
       ${hasInstock ? `<button class="btn-secondary" id="removePreorderBtn" style="margin-top:8px; color:var(--c-orange); border-color:var(--c-orange)">不想等預購？移除預購商品，僅結帳現貨</button>` : ''}
     `;
   } else {
@@ -161,9 +160,6 @@ function render() {
       </div>
 
       <button class="btn-primary" id="openCvsFormBtn" style="background:var(--c-coffee)">結帳並填寫超商取貨資訊</button>
-      <button class="btn-secondary" disabled style="margin-top:8px; opacity:0.4; cursor:not-allowed">
-        <span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號（無預購商品時無法使用）
-      </button>
     `;
   }
 
@@ -184,7 +180,6 @@ function render() {
   `;
 
   container.innerHTML = html;
-  document.getElementById('submitOrderBtn')?.addEventListener('click', handleSubmitOrder);
   document.getElementById('openCvsFormBtn')?.addEventListener('click', openCvsForm);
   document.getElementById('removePreorderBtn')?.addEventListener('click', () => {
     if (!confirm('確定要移除購物車中所有預購商品嗎？')) return;
@@ -215,68 +210,7 @@ function removeItem(idx) {
   render();
 }
 
-async function handleSubmitOrder() {
-  const lineNameInput = document.getElementById('lineNameInput');
-  const lineName = lineNameInput.value.trim();
-
-  if (!lineName) {
-    showToast('請先填入您的 LINE 名稱');
-    lineNameInput.focus();
-    return;
-  }
-
-  const cart = getCart();
-  if (cart.length === 0) return;
-
-  const btn = document.getElementById('submitOrderBtn');
-  btn.disabled = true;
-  btn.innerHTML = `驗證庫存中...`;
-
-  try {
-    // 結帳前最終庫存驗證
-    const stockProblems = await validateCartStock(cart);
-    if (stockProblems) {
-      showToast(`部分商品庫存不足：${stockProblems[0]}`);
-      btn.disabled = false;
-      btn.innerHTML = `<span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號`;
-      render(); // 重新渲染購物車，讓客人自行調整
-      return;
-    }
-
-    btn.innerHTML = `產生圖片中...`;
-    await generateAndDownloadOrderImage(cart, lineName);
-
-    // 記錄訂單到 Firestore（給後台查看用）
-    await db.collection(COL.ORDERS).add({
-      orderType: 'line',
-      lineName: lineName,
-      items: cart,
-      total: cart.reduce((sum, item) => sum + item.price * item.qty, 0),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    await deductStockForOrder(cart);
-    clearCart();
-    refreshCartBadge();
-
-    showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
-
-    // 先開啟 LINE 官方帳號（新分頁），再跳轉到訂單完成頁
-    setTimeout(() => {
-      window.open(settings.lineOfficialUrl, '_blank');
-      location.href = 'order-complete.html';
-    }, 1200);
-
-  } catch (err) {
-    console.error(err);
-    showToast('產生訂單圖片時發生錯誤，請稍後再試');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = `<span style="font-weight:700">LINE</span> 產生訂單圖片並前往官方帳號`;
-  }
-}
-
-async function generateAndDownloadOrderImage(cart, lineName) {
+async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo) {
   const canvas = document.getElementById('orderImageCanvas');
   const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const now = new Date();
@@ -286,10 +220,11 @@ async function generateAndDownloadOrderImage(cart, lineName) {
     <div class="oi-header">
       <div class="oi-title">${escapeHtml(settings.siteName)}</div>
       <div class="oi-sub">${escapeHtml(settings.siteSubtitle)}</div>
+      <div class="oi-sub">訂單編號：${escapeHtml(orderNo)}</div>
     </div>
     ${cart.map(item => `
       <div class="oi-item">
-        <div class="oi-img">${item.image ? `<img src="${item.image}" crossorigin="anonymous">` : ''}</div>
+        <div class="oi-img">${item.image ? `<img src="${escapeHtml(item.image)}" crossorigin="anonymous">` : ''}</div>
         <div>
           <div class="oi-name">${escapeHtml(item.name)}</div>
           <div class="oi-meta">${item.style ? `款式：${escapeHtml(item.style)} ・ ` : ''}數量：${item.qty}</div>
@@ -297,9 +232,11 @@ async function generateAndDownloadOrderImage(cart, lineName) {
         <div class="oi-price">${formatPrice(item.price * item.qty)}</div>
       </div>
     `).join('')}
-    <div class="oi-total"><span>訂單合計</span><span>${formatPrice(total)}</span></div>
+    <div class="oi-total"><span>商品合計（預購最終金額以小編確認為準）</span><span>${formatPrice(total)}</span></div>
     <div class="oi-customer">
-      ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}
+      ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
+      取件人：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
+      取貨門市：${escapeHtml(shippingInfo?.storeName || '')}${shippingInfo?.store ? `（${escapeHtml(shippingInfo.store)}）` : ''}
     </div>
     <div class="oi-footer">訂單產生時間：${dateStr}　${escapeHtml(settings.watermarkText)}</div>
   `;
@@ -323,13 +260,13 @@ async function generateAndDownloadOrderImage(cart, lineName) {
   });
 
   const link = document.createElement('a');
-  link.download = `K.Zone訂單_${lineName}_${Date.now()}.png`;
+  link.download = `K.Zone訂單_${orderNo}_${lineName}.png`;
   link.href = renderedCanvas.toDataURL('image/png');
   link.click();
 }
 
 // ============================================
-// 超商取貨結帳表單（現貨訂單專用）
+// 取貨資訊表單（現貨與預購共用；預購送出後會再產生訂單圖片並開啟 LINE）
 // ============================================
 function openCvsForm() {
   const lineNameInput = document.getElementById('lineNameInput');
@@ -343,13 +280,15 @@ function openCvsForm() {
   const cart = getCart();
   if (cart.length === 0) return;
 
+  const hasPreorder = cart.some(item => item.stockType === 'preorder');
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'cvsFormOverlay';
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:480px">
       <div class="modal-header">
-        <span class="modal-title">超商取貨資訊</span>
+        <span class="modal-title">取貨資訊</span>
         <button class="modal-close" id="closeCvsForm">×</button>
       </div>
       <div class="modal-body">
@@ -372,9 +311,9 @@ function openCvsForm() {
         <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>運費</span><span id="cvs_shipping"></span></div>
-          <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>應付總額（貨到付款）</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
+          <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>${hasPreorder ? '預估總額（實際依小編確認為準）' : '應付總額（貨到付款）'}</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
         </div>
-        <button class="btn-primary" id="confirmCvsBtn" style="margin-top:6px">確認送出訂單</button>
+        <button class="btn-primary" id="confirmCvsBtn" style="margin-top:6px">${hasPreorder ? '確認並前往 LINE 通知小編' : '確認送出訂單'}</button>
       </div>
     </div>
   `;
@@ -390,10 +329,10 @@ function openCvsForm() {
   document.getElementById('closeCvsForm').addEventListener('click', close);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
 
-  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay));
+  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay, hasPreorder));
 }
 
-async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
+async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPreorder) {
   const name = document.getElementById('cvs_name').value.trim();
   const phone = document.getElementById('cvs_phone').value.trim();
   const store = document.getElementById('cvs_store').value.trim();
@@ -414,18 +353,31 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
     if (stockProblems) {
       showToast(`部分商品庫存不足：${stockProblems[0]}`);
       btn.disabled = false;
-      btn.textContent = '確認送出訂單';
+      btn.textContent = hasPreorder ? '確認並前往 LINE 通知小編' : '確認送出訂單';
       overlay.remove();
       render(); // 重新渲染購物車
       return;
     }
 
-    btn.textContent = '送出中...';
+    const orderNo = genOrderNo();
+
+    if (hasPreorder) {
+      btn.textContent = '產生圖片中...';
+      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store });
+    }
+
+    // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），
+    // 成功後才寫入訂單，避免「訂單存在但庫存沒扣到」的不一致狀態
+    btn.textContent = '確認庫存中...';
+    await deductStockForOrder(cart);
+
     const today = new Date();
     const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
 
+    btn.textContent = '送出中...';
     await db.collection(COL.ORDERS).add({
-      orderType: 'cvs',
+      orderType: hasPreorder ? 'line' : 'cvs',
+      orderNo: orderNo,
       lineName: lineName,
       cvsName: name,
       cvsPhone: phone,
@@ -439,19 +391,37 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay) {
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    await deductStockForOrder(cart);
     clearCart();
     refreshCartBadge();
-
     overlay.remove();
-    showToast('訂單已送出！小編確認後會盡快為您安排出貨');
-    setTimeout(() => location.href = 'order-complete.html', 1800);
+
+    sessionStorage.setItem('kzone_last_order', JSON.stringify({
+      orderNo,
+      orderType: hasPreorder ? 'preorder' : 'cvs'
+    }));
+
+    if (hasPreorder) {
+      showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
+      setTimeout(() => {
+        window.open(settings.lineOfficialUrl, '_blank');
+        location.href = 'order-complete.html';
+      }, 1200);
+    } else {
+      showToast('訂單已送出！小編確認後會盡快為您安排出貨');
+      setTimeout(() => location.href = 'order-complete.html', 1200);
+    }
 
   } catch (err) {
-    console.error(err);
-    showToast('訂單送出失敗，請稍後再試');
-    btn.disabled = false;
-    btn.textContent = '確認送出訂單';
+    console.error('取貨結帳流程失敗:', { lineName, name, phone, hasPreorder, cartItemCount: cart.length, total: subtotal + shipping, err });
+    if (err.name === 'StockInsufficientError') {
+      showToast(`部分商品庫存不足：${err.problems[0]}`);
+      overlay.remove();
+      render(); // 重新渲染購物車
+    } else {
+      showToast(hasPreorder ? '產生訂單時發生錯誤，請稍後再試' : '訂單送出失敗，請稍後再試');
+      btn.disabled = false;
+      btn.textContent = hasPreorder ? '確認並前往 LINE 通知小編' : '確認送出訂單';
+    }
   }
 }
 

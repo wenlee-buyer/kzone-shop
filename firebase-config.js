@@ -65,6 +65,18 @@ const DEFAULT_SETTINGS = {
 };
 
 // ============================================
+// 密碼雜湊工具（後台密碼不再明文存放）
+// ============================================
+async function sha256Hex(str) {
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function looksLikeHash(str) {
+  return typeof str === 'string' && /^[0-9a-f]{64}$/i.test(str);
+}
+
+// ============================================
 // 共用工具函式
 // ============================================
 
@@ -91,7 +103,8 @@ async function ensureDefaultData() {
 
     const settingsDoc = await db.collection(COL.SETTINGS).doc('main').get();
     if (!settingsDoc.exists) {
-      await db.collection(COL.SETTINGS).doc('main').set(DEFAULT_SETTINGS);
+      const hashedPw = await sha256Hex(DEFAULT_SETTINGS.adminPassword);
+      await db.collection(COL.SETTINGS).doc('main').set({ ...DEFAULT_SETTINGS, adminPassword: hashedPw });
     }
   } catch (err) {
     console.error('初始化預設資料失敗:', err);

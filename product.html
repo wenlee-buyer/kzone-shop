@@ -156,9 +156,9 @@ function render() {
     imgsHtml = `
       <div class="detail-imgs" id="imgStrip">
         <div class="dimg-main" id="mainImgWrap">
-          <img src="${images[0]}" id="mainImg" alt="${escapeHtml(product.name)}">
+          <img src="${escapeHtml(images[0])}" id="mainImg" alt="${escapeHtml(product.name)}">
         </div>
-        ${images.map((img, i) => `<div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})"><img src="${img}" alt="商品圖${i+1}"></div>`).join('')}
+        ${images.map((img, i) => `<div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})"><img src="${escapeHtml(img)}" alt="商品圖${i+1}"></div>`).join('')}
       </div>
     `;
   } else {

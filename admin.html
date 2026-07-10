@@ -49,7 +49,25 @@ checkLogin();
 async function doLogin() {
   const pw = document.getElementById('pwInput').value;
   const settings = await getSettings();
-  if (pw === settings.adminPassword) {
+  const stored = settings.adminPassword || '';
+
+  let ok = false;
+  if (looksLikeHash(stored)) {
+    ok = (await sha256Hex(pw)) === stored;
+  } else {
+    // 相容尚未雜湊過的舊資料：先明文比對，成功後自動升級成雜湊存回 Firestore
+    ok = pw === stored;
+    if (ok) {
+      try {
+        const hashed = await sha256Hex(pw);
+        await db.collection(COL.SETTINGS).doc('main').set({ adminPassword: hashed }, { merge: true });
+      } catch (e) {
+        console.error('密碼自動升級為雜湊失敗:', e);
+      }
+    }
+  }
+
+  if (ok) {
     sessionStorage.setItem('kzone_admin_auth', '1');
     location.href = 'admin-dashboard.html';
   } else {
