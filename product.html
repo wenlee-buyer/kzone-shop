@@ -19,10 +19,11 @@
 .detail-imgs { display: flex; gap: 8px; padding: 12px 16px; overflow-x: auto; }
 .detail-imgs::-webkit-scrollbar { display: none; }
 .dimg-main { width: 240px; height: 240px; flex-shrink: 0; background: var(--c-cream); border-radius: 12px; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 0.5px solid var(--c-blush); cursor: pointer; }
-.dimg-main img { width: 100%; height: 100%; object-fit: cover; }
-.dimg-thumb { width: 70px; height: 70px; flex-shrink: 0; background: var(--c-blush); border-radius: 8px; border: 1.5px solid transparent; overflow: hidden; cursor: pointer; }
+.dimg-main img, .dimg-main video { width: 100%; height: 100%; object-fit: cover; }
+.dimg-thumb { width: 70px; height: 70px; flex-shrink: 0; background: var(--c-blush); border-radius: 8px; border: 1.5px solid transparent; overflow: hidden; cursor: pointer; position: relative; }
 .dimg-thumb.active { border-color: var(--c-orange); }
-.dimg-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.dimg-thumb img, .dimg-thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.dimg-thumb-playicon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.25); color: #fff; pointer-events: none; }
 .detail-info { padding: 4px 16px 100px; }
 .dtitle { font-size: 19px; font-weight: 700; color: var(--c-coffee); line-height: 1.4; }
 .dbadges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -151,14 +152,27 @@ function render() {
   const hasStyles = product.styles && product.styles.length > 0;
   const productSoldOut = isProductSoldOut(product);
 
+  // 媒體清單：圖片在前，短影片（若有）放在最後一個
+  const media = images.map(url => ({ type: 'image', url }));
+  if (product.video) media.push({ type: 'video', url: product.video });
+  window.__productMedia = media; // 給 switchImg 用
+
   let imgsHtml = '';
-  if (images.length > 0) {
+  if (media.length > 0) {
+    const first = media[0];
     imgsHtml = `
       <div class="detail-imgs" id="imgStrip">
         <div class="dimg-main" id="mainImgWrap">
-          <img src="${escapeHtml(images[0])}" id="mainImg" alt="${escapeHtml(product.name)}">
+          <img src="${first.type === 'image' ? escapeHtml(first.url) : ''}" id="mainImg" alt="${escapeHtml(product.name)}" style="${first.type === 'video' ? 'display:none' : ''}">
+          <video id="mainVideo" src="${first.type === 'video' ? escapeHtml(first.url) : ''}" controls playsinline style="${first.type === 'video' ? '' : 'display:none'}"></video>
         </div>
-        ${images.map((img, i) => `<div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})"><img src="${escapeHtml(img)}" alt="商品圖${i+1}"></div>`).join('')}
+        ${media.map((m, i) => `
+          <div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})">
+            ${m.type === 'image'
+              ? `<img src="${escapeHtml(m.url)}" alt="商品圖${i+1}">`
+              : `<video src="${escapeHtml(m.url)}" muted playsinline preload="metadata"></video><div class="dimg-thumb-playicon">${icon('player-play', 22)}</div>`}
+          </div>
+        `).join('')}
       </div>
     `;
   } else {
@@ -260,8 +274,25 @@ function render() {
 }
 
 function switchImg(idx) {
-  const images = product.images;
-  document.getElementById('mainImg').src = images[idx];
+  const media = window.__productMedia || [];
+  const item = media[idx];
+  if (!item) return;
+
+  const mainImg = document.getElementById('mainImg');
+  const mainVideo = document.getElementById('mainVideo');
+
+  if (item.type === 'video') {
+    mainVideo.pause();
+    mainVideo.src = item.url;
+    mainVideo.style.display = '';
+    mainImg.style.display = 'none';
+  } else {
+    mainVideo.pause();
+    mainVideo.style.display = 'none';
+    mainImg.style.display = '';
+    mainImg.src = item.url;
+  }
+
   document.querySelectorAll('.dimg-thumb').forEach((el, i) => {
     el.classList.toggle('active', i === idx);
   });
@@ -289,9 +320,11 @@ async function handleAddToCart() {
     return;
   }
 
-  const isFirstTime = !hasSeenFirstCartReminder();
+  // 提醒只在「第一次加入預購商品」時跳出，現貨商品不會觸發
+  const isPreorderItem = product.stockType === 'preorder';
+  const shouldShowReminder = isPreorderItem && !hasSeenFirstCartReminder();
 
-  if (isFirstTime) {
+  if (shouldShowReminder) {
     showFirstCartReminder(() => {
       markFirstCartReminderSeen();
       doAddToCart();

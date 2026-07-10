@@ -93,8 +93,9 @@
   <div class="complete-title">訂單已送出！</div>
   <div class="complete-sub" id="completeSub">
     感謝您的訂購 🍄<br>
-    小編確認商品數量與金額後<br>
-    會盡快透過 LINE 與您聯繫
+    <strong>請立即點選下方連結私訊官方確認訂單與訂金</strong><br>
+    小編確認商品後<br>
+    會盡快告知您預計到貨日期
   </div>
 
   <div class="notice-box" id="orderNoBox" style="display:none; text-align:center">
@@ -171,8 +172,9 @@ async function init() {
       } else if (lastOrder.orderType === 'preorder') {
         document.getElementById('completeSub').innerHTML = `
           感謝您的訂購 🍄<br>
-          小編確認商品數量與金額後<br>
-          會盡快透過 LINE 與您聯繫
+          <strong>請立即點選下方連結私訊官方確認訂單與訂金</strong><br>
+          小編確認商品後<br>
+          會盡快告知您預計到貨日期
         `;
       }
     }

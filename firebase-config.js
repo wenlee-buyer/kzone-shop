@@ -137,7 +137,8 @@ function genId(prefix = 'id') {
 
 // LocalStorage 購物車管理（購物車只需暫存在客人自己裝置上，不需要存進資料庫）
 const CART_KEY = 'kzone_cart_v1';
-const FIRST_CART_FLAG = 'kzone_first_cart_seen_v1';
+// v2：改成只在「第一次加入預購商品」時才跳提醒，用新 key 避免沿用舊版「第一次加任何商品都算」的紀錄
+const FIRST_CART_FLAG = 'kzone_first_preorder_cart_seen_v2';
 
 function getCart() {
   try {
@@ -237,6 +238,8 @@ function getCartTotal() {
   return getCart().reduce((sum, item) => sum + (item.price * item.qty), 0);
 }
 
+// 這個提醒只在客人「第一次把預購商品加入購物車」時跳出（現貨不會觸發），
+// 所以旗標語意上是「有沒有看過預購提醒」，跟是否加過現貨無關
 function hasSeenFirstCartReminder() {
   return localStorage.getItem(FIRST_CART_FLAG) === '1';
 }
