@@ -193,7 +193,7 @@ function filterAndRender() {
     if (currentCatFilter !== 'all') {
       filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
     }
-    filtered = sortBySortOrderSoldOutLast(filtered);
+    filtered = sortBySortOrderSoldOutLast(filtered, currentCatFilter !== 'all' ? currentCatFilter : null);
   }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
 
