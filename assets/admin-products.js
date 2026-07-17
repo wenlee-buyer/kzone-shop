@@ -27,10 +27,12 @@ async function renderProductsPage() {
     </div>
 
     <div class="admin-card">
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center">
         <select id="catFilterSelect" style="border:0.5px solid var(--c-rose); border-radius:8px; padding:8px 10px; font-size:13px; color:var(--c-coffee)">
           <option value="all">全部來源分類</option>
         </select>
+        <button class="btn-secondary" id="saveProductOrderBtn" style="width:auto">儲存排序</button>
+        <span style="font-size:11px; color:var(--c-rose-text)">拖拉列表最左側的把手即可調整順序（首頁精選排序請到「首頁排序」頁面）</span>
       </div>
       <div id="productsTableWrap">
         <div class="loading-wrap"><div class="spin"></div>載入商品中...</div>
@@ -50,6 +52,7 @@ async function renderProductsPage() {
     loadAndRenderProductsTable();
   });
 
+  document.getElementById('saveProductOrderBtn').addEventListener('click', saveProductRowOrder);
   document.getElementById('addProductBtn').addEventListener('click', () => openProductEditor(null));
   document.getElementById('toggleArchivedBtn').addEventListener('click', (e) => {
     productsPageState.filterArchived = !productsPageState.filterArchived;
@@ -88,6 +91,12 @@ async function loadAndRenderProductsTable() {
       products = products.filter(p => isProductSoldOut(p));
     }
 
+    // 依照排序值顯示，讓拖拉調整時看到的順序就是目前實際的順序。
+    // 有選特定分類時，用該分類專屬的排序值（同商品掛不同分類可以各自排序）；
+    // 選「全部來源分類」時則用共用的 sortOrder（跟首頁排序頁共用同一個值）。
+    const sortCatId = productsPageState.filterCat !== 'all' ? productsPageState.filterCat : null;
+    products.sort((a, b) => getCategorySortOrder(a, sortCatId) - getCategorySortOrder(b, sortCatId));
+
     if (products.length === 0) {
       wrap.innerHTML = `<div class="empty-state">${icon('package-off', 18)}目前沒有商品</div>`;
       return;
@@ -97,10 +106,10 @@ async function loadAndRenderProductsTable() {
       <table class="admin-table">
         <thead>
           <tr>
-            <th>圖片</th><th>名稱</th><th>來源</th><th>狀態</th><th>價格</th><th>款式／庫存</th><th>操作</th>
+            <th></th><th>圖片</th><th>名稱</th><th>來源</th><th>狀態</th><th>價格</th><th>款式／庫存</th><th>操作</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="productsTableBody">
           ${products.map(p => renderProductRow(p)).join('')}
         </tbody>
       </table>
@@ -108,9 +117,12 @@ async function loadAndRenderProductsTable() {
 
     products.forEach(p => {
       document.getElementById(`edit-${p.id}`)?.addEventListener('click', () => openProductEditor(p));
+      document.getElementById(`duplicate-${p.id}`)?.addEventListener('click', () => duplicateProduct(p));
       document.getElementById(`archive-${p.id}`)?.addEventListener('click', () => toggleArchiveProduct(p));
       document.getElementById(`delete-${p.id}`)?.addEventListener('click', () => deleteProductPermanently(p));
     });
+
+    initProductRowDragReorder();
 
   } catch (err) {
     console.error(err);
@@ -142,7 +154,8 @@ function renderProductRow(p) {
   }
 
   return `
-    <tr>
+    <tr draggable="true" data-row-id="${p.id}">
+      <td style="cursor:grab; color:var(--c-rose-text)">${icon('menu', 16)}</td>
       <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
       <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
       <td style="white-space:normal">${catNames.length > 0 ? catNames.map(n => `<span class="pill pill-instock" style="margin:1px 2px; display:inline-block">${escapeHtml(n)}</span>`).join('') : '-'}</td>
@@ -152,6 +165,7 @@ function renderProductRow(p) {
       <td>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
           <button class="btn-icon" id="edit-${p.id}" title="編輯">編輯</button>
+          <button class="btn-icon" id="duplicate-${p.id}" title="複製商品（照片與推薦文字需重新填寫）">複製</button>
           <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}">${p.archived ? '取消封存' : '封存'}</button>
           <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除">刪除</button>
         </div>
@@ -173,16 +187,101 @@ async function deleteProductPermanently(p) {
   loadAndRenderProductsTable();
 }
 
+// ---- 複製商品：來源分類/現貨預購/角色標籤/價格/款式庫存 等全部沿用，
+// 圖片與小編推薦清空需要重新填寫，名稱加上「（備份）」避免跟原商品搞混，
+// 新商品預設不上架精選、排序值重置到最後，需要你確認過內容再手動勾選精選 ----
+function duplicateProduct(p) {
+  const clone = {
+    ...p,
+    name: `${p.name}（備份）`,
+    images: [],
+    video: null,
+    recommendation: '',
+    featured: false,
+    sortOrder: 9999,
+    archived: false
+  };
+  delete clone.id;
+  delete clone.createdAt;
+  delete clone.updatedAt;
+  openProductEditor(clone, { isDuplicate: true });
+}
+
+// ---- 商品列表拖拉排序（取代原本商品編輯視窗裡的排序值輸入框）----
+// 拖完之後要按「儲存排序」才會真的寫入資料庫，跟首頁排序頁面用同一個 sortOrder 欄位
+function initProductRowDragReorder() {
+  const tbody = document.getElementById('productsTableBody');
+  if (!tbody) return;
+  let dragRow = null;
+
+  tbody.querySelectorAll('tr[data-row-id]').forEach(row => {
+    row.addEventListener('dragstart', () => {
+      dragRow = row;
+      row.style.opacity = '0.4';
+    });
+    row.addEventListener('dragend', () => {
+      row.style.opacity = '1';
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragRow || dragRow === row) return;
+      const allRows = Array.from(tbody.querySelectorAll('tr[data-row-id]'));
+      const fromIdx = allRows.indexOf(dragRow);
+      const toIdx = allRows.indexOf(row);
+      if (fromIdx < toIdx) row.after(dragRow); else row.before(dragRow);
+    });
+  });
+}
+
+async function saveProductRowOrder() {
+  const tbody = document.getElementById('productsTableBody');
+  if (!tbody) return;
+  const orderedIds = Array.from(tbody.querySelectorAll('tr[data-row-id]')).map(r => r.dataset.rowId);
+  if (orderedIds.length === 0) return;
+
+  const btn = document.getElementById('saveProductOrderBtn');
+  btn.disabled = true;
+  btn.textContent = '儲存中...';
+  try {
+    const catId = productsPageState.filterCat !== 'all' ? productsPageState.filterCat : null;
+    const batch = db.batch();
+    orderedIds.forEach((id, idx) => {
+      const ref = db.collection(COL.PRODUCTS).doc(id);
+      if (catId) {
+        // 有選特定分類：只更新這個分類專屬的排序值，不影響商品在其他分類/首頁的順序
+        batch.update(ref, { [`sortOrderByCategory.${catId}`]: idx + 1 });
+      } else {
+        // 「全部來源分類」：沿用共用的 sortOrder（跟首頁排序頁共用）
+        batch.update(ref, { sortOrder: idx + 1 });
+      }
+    });
+    await batch.commit();
+    showToast('排序已儲存');
+    await loadAndRenderProductsTable();
+  } catch (err) {
+    console.error(err);
+    showToast('排序儲存失敗，請稍後再試');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '儲存排序';
+  }
+}
+
 // ============================================
 // 新增／編輯商品 Modal
 // ============================================
 
-function openProductEditor(product) {
-  productsPageState.editingProduct = product;
+function openProductEditor(product, opts = {}) {
+  const isDuplicate = !!opts.isDuplicate;
+  // 複製商品時，不把來源商品當作編輯目標，儲存時會走「新增」流程產生新的一筆
+  productsPageState.editingProduct = isDuplicate ? null : product;
   productsPageState.pendingImages = (product?.images || []).map(url => ({ url, dataUrl: url, uploaded: true }));
   productsPageState.pendingVideo = product?.video ? { url: product.video, previewUrl: product.video, uploaded: true } : null;
 
-  const isEdit = !!product;
+  const isEdit = !!product && !isDuplicate;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'productModalOverlay';
@@ -190,7 +289,7 @@ function openProductEditor(product) {
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:560px">
       <div class="modal-header">
-        <span class="modal-title">${isEdit ? '編輯商品' : '新增商品'}</span>
+        <span class="modal-title">${isDuplicate ? '複製商品（請確認內容後儲存）' : (isEdit ? '編輯商品' : '新增商品')}</span>
         <button class="modal-close" id="closeProductModal">×</button>
       </div>
       <div class="modal-body">
@@ -204,10 +303,6 @@ function openProductEditor(product) {
             <input type="checkbox" id="pf_featured" ${product?.featured ? 'checked' : ''} style="width:16px; height:16px">
             精選顯示在首頁「所有商品」區塊
           </label>
-          <div style="margin-top:10px">
-            <label class="field-label">排序值（數字越小越排前面，同時影響首頁精選排序與分類列表排序，留空則排最後）</label>
-            <input type="number" id="pf_sortOrder" value="${product?.sortOrder ?? ''}" placeholder="例：1">
-          </div>
         </div>
 
         <div class="field">
@@ -276,7 +371,7 @@ function openProductEditor(product) {
           <textarea id="pf_recommendation" placeholder="例：超療癒韓國限定款！數量非常有限～">${product?.recommendation ? escapeHtml(product.recommendation) : ''}</textarea>
         </div>
 
-        <button class="btn-primary" id="pf_saveBtn" style="margin-top:6px">${isEdit ? '儲存變更' : '新增商品'}</button>
+        <button class="btn-primary" id="pf_saveBtn" style="margin-top:6px">${isDuplicate ? '儲存複製的商品' : (isEdit ? '儲存變更' : '新增商品')}</button>
       </div>
     </div>
   `;
@@ -590,8 +685,11 @@ async function saveProduct(styles) {
   const stockType = document.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
   const featured = document.getElementById('pf_featured').checked;
-  const sortOrderVal = document.getElementById('pf_sortOrder').value;
-  const sortOrder = sortOrderVal === '' ? 9999 : parseInt(sortOrderVal);
+  // 排序值不再由這個表單填寫，改成在「商品管理」列表拖拉排序；
+  // 編輯既有商品時保留原本的排序值，新增/複製的商品預設排最後，再由拖拉排序決定實際位置
+  const sortOrder = productsPageState.editingProduct
+    ? (productsPageState.editingProduct.sortOrder ?? 9999)
+    : 9999;
   const cleanStyles = styles
     .filter(s => s.name.trim())
     .map(s => ({ name: s.name.trim(), stock: s.stock === '' || s.stock === null ? null : parseInt(s.stock) }));
@@ -633,7 +731,9 @@ async function saveProduct(styles) {
       styles: cleanStyles,
       images: imageUrls,
       video: videoUrl,
-      archived: false,
+      // 編輯既有商品時要保留原本的封存狀態，不能每次存檔都強制變成「未封存」，
+      // 不然管理員只是想改個價格，結果封存的商品就被悄悄重新上架了
+      archived: productsPageState.editingProduct ? !!productsPageState.editingProduct.archived : false,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     };
 
@@ -644,6 +744,13 @@ async function saveProduct(styles) {
       productData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
       await db.collection(COL.PRODUCTS).add(productData);
       showToast('商品已新增');
+      // 新增/複製出來的商品一定是「未封存」，如果目前正在看「已封存商品」清單，
+      // 切回「上架中商品」清單，不然存完會覺得商品憑空消失
+      if (productsPageState.filterArchived) {
+        productsPageState.filterArchived = false;
+        const toggleBtn = document.getElementById('toggleArchivedBtn');
+        if (toggleBtn) toggleBtn.textContent = '查看已封存商品';
+      }
     }
 
     closeProductEditor();

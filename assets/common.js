@@ -214,13 +214,26 @@ function filterAndSortNewProducts(products) {
     });
 }
 
-// 一般分類/全部商品的共用排序：依 sortOrder 排序，售完商品強制排到最後
-function sortBySortOrderSoldOutLast(products) {
+// 取得商品在「某個分類」底下要用的排序值：
+// 同一個商品可能掛在多個分類，每個分類要能各自獨立調整順序，
+// 所以優先看 sortOrderByCategory[categoryId]（後台在該分類底下拖拉調整的值），
+// 沒有設定過的話（例如舊資料、或還沒在這個分類拖拉過）就退回共用的 sortOrder。
+// categoryId 為 null/undefined 時（例如首頁「全部」精選區塊），一律用共用的 sortOrder。
+function getCategorySortOrder(product, categoryId) {
+  if (categoryId && product.sortOrderByCategory && product.sortOrderByCategory[categoryId] !== undefined) {
+    return product.sortOrderByCategory[categoryId];
+  }
+  return product.sortOrder ?? 9999;
+}
+
+// 一般分類/全部商品的共用排序：依排序值排序，售完商品強制排到最後
+// categoryId 有給的話（例如正在看某個分類的商品列表），會優先採用該分類專屬的排序值
+function sortBySortOrderSoldOutLast(products, categoryId) {
   return products.slice().sort((a, b) => {
     const aSoldOut = isProductSoldOut(a) ? 1 : 0;
     const bSoldOut = isProductSoldOut(b) ? 1 : 0;
     if (aSoldOut !== bSoldOut) return aSoldOut - bSoldOut;
-    return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+    return getCategorySortOrder(a, categoryId) - getCategorySortOrder(b, categoryId);
   });
 }
 
