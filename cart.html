@@ -37,6 +37,11 @@
 .ct-total { display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; color: var(--c-coffee); border-top: 0.5px solid var(--c-blush); padding-top: 10px; margin-top: 6px; }
 .checkout-note { background: #fff8f5; border: 0.5px solid var(--c-orange); border-radius: 10px; padding: 13px; margin-bottom: 14px; font-size: 12px; color: var(--c-coffee); line-height: 1.8; text-align: center; }
 .checkout-note strong { color: var(--c-orange); }
+.coupon-row { display: flex; gap: 8px; margin-top: 10px; }
+.coupon-row input { flex: 1; border: 0.5px solid var(--c-rose); border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+.coupon-applied { display: flex; align-items: center; justify-content: space-between; background: var(--c-cream); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 12px; color: var(--c-coffee); }
+.coupon-applied button { background: none; border: none; color: var(--c-rose-text); font-size: 12px; text-decoration: underline; }
+.ct-discount { color: var(--c-orange) !important; }
 
 #orderImageCanvas { padding: 24px; background: var(--c-bg); width: 420px; }
 .oi-header { text-align: center; padding-bottom: 16px; border-bottom: 2px solid var(--c-coffee); margin-bottom: 16px; }
@@ -78,6 +83,7 @@
 <script>document.addEventListener("DOMContentLoaded", () => renderStaticIcons());</script>
 <script>
 let settings = {};
+let appliedCoupon = null; // { code, discountType, discountValue } 或 null；只在畫面上暫存，實際折扣在結帳當下重新驗證一次
 
 async function init() {
   settings = await getSettings();
@@ -101,6 +107,9 @@ function render() {
 
   const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const totalQty = cart.reduce((sum, item) => sum + item.qty, 0);
+  // 優惠碼只折商品小計，不折運費（運費另外在超商表單裡計算）
+  const discount = appliedCoupon ? calcCouponDiscount(appliedCoupon, total) : 0;
+  const totalAfterDiscount = total - discount;
 
   let html = cart.map((item, idx) => `
     <div class="cart-item ${item.stockType === 'preorder' ? 'cart-item-preorder' : ''}">
@@ -125,7 +134,19 @@ function render() {
     <div class="cart-total">
       <div class="ct-row"><span>商品小計</span><span>${formatPrice(total)}</span></div>
       <div class="ct-row"><span>共 ${totalQty} 件商品</span><span></span></div>
-      <div class="ct-total"><span>合計</span><span>${formatPrice(total)}</span></div>
+      ${appliedCoupon ? `<div class="ct-row ct-discount"><span>優惠碼折抵（${escapeHtml(appliedCoupon.code)}）</span><span>-${formatPrice(discount)}</span></div>` : ''}
+      <div class="ct-total"><span>合計</span><span>${formatPrice(totalAfterDiscount)}</span></div>
+      ${appliedCoupon ? `
+        <div class="coupon-applied">
+          <span>已套用優惠碼「${escapeHtml(appliedCoupon.code)}」</span>
+          <button id="removeCouponBtn">移除</button>
+        </div>
+      ` : `
+        <div class="coupon-row">
+          <input type="text" id="couponInput" placeholder="輸入優惠碼">
+          <button class="btn-secondary" id="applyCouponBtn" style="width:auto; padding:0 16px">套用</button>
+        </div>
+      `}
     </div>
 
     <div class="field">
@@ -190,6 +211,35 @@ function render() {
     render();
     showToast('已移除預購商品');
   });
+  document.getElementById('applyCouponBtn')?.addEventListener('click', applyCouponCode);
+  document.getElementById('couponInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyCouponCode();
+  });
+  document.getElementById('removeCouponBtn')?.addEventListener('click', () => {
+    appliedCoupon = null;
+    render();
+  });
+}
+
+async function applyCouponCode() {
+  const input = document.getElementById('couponInput');
+  const btn = document.getElementById('applyCouponBtn');
+  const code = input.value.trim();
+  if (!code) { showToast('請輸入優惠碼'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '查詢中...';
+  const result = await lookupCoupon(code);
+  btn.disabled = false;
+  btn.textContent = '套用';
+
+  if (!result.valid) {
+    showToast(result.reason);
+    return;
+  }
+  appliedCoupon = result.coupon;
+  showToast('優惠碼套用成功！');
+  render();
 }
 
 function changeQty(idx, delta) {
@@ -210,9 +260,10 @@ function removeItem(idx) {
   render();
 }
 
-async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo) {
+async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo, couponInfo) {
   const canvas = document.getElementById('orderImageCanvas');
   const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const discount = couponInfo?.discount || 0;
   const now = new Date();
   const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
@@ -232,7 +283,8 @@ async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingIn
         <div class="oi-price">${formatPrice(item.price * item.qty)}</div>
       </div>
     `).join('')}
-    <div class="oi-total"><span>商品合計（預購最終金額以小編確認為準）</span><span>${formatPrice(total)}</span></div>
+    ${discount > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name" style="color:var(--c-orange)">優惠碼折抵（${escapeHtml(couponInfo.code)}）</div><div class="oi-price">-${formatPrice(discount)}</div></div>` : ''}
+    <div class="oi-total"><span>商品合計（預購最終金額以小編確認為準）</span><span>${formatPrice(total - discount)}</span></div>
     <div class="oi-customer">
       ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
       取件人：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
@@ -310,6 +362,7 @@ function openCvsForm() {
         </div>
         <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
+          <div id="cvs_discountRow" style="font-size:12px; color:var(--c-orange); display:none; justify-content:space-between; margin-bottom:4px"><span id="cvs_discountLabel"></span><span id="cvs_discount"></span></div>
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>運費</span><span id="cvs_shipping"></span></div>
           <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>${hasPreorder ? '預估總額（實際依小編確認為準）' : '應付總額（貨到付款）'}</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
         </div>
@@ -320,19 +373,27 @@ function openCvsForm() {
   document.body.appendChild(overlay);
 
   const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  // 優惠碼只折商品小計，運費一律照原本規則計算，不受折扣影響
+  const discount = appliedCoupon ? calcCouponDiscount(appliedCoupon, total) : 0;
+  const totalAfterDiscount = total - discount;
   const shipping = calcShippingFee(total);
   document.getElementById('cvs_subtotal').textContent = formatPrice(total);
+  if (discount > 0) {
+    document.getElementById('cvs_discountRow').style.display = 'flex';
+    document.getElementById('cvs_discountLabel').textContent = `優惠碼折抵（${appliedCoupon.code}）`;
+    document.getElementById('cvs_discount').textContent = `-${formatPrice(discount)}`;
+  }
   document.getElementById('cvs_shipping').textContent = shipping === 0 ? '免運費' : formatPrice(shipping);
-  document.getElementById('cvs_total').textContent = formatPrice(total + shipping);
+  document.getElementById('cvs_total').textContent = formatPrice(totalAfterDiscount + shipping);
 
   const close = () => overlay.remove();
   document.getElementById('closeCvsForm').addEventListener('click', close);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
 
-  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay, hasPreorder));
+  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay, hasPreorder, appliedCoupon, discount));
 }
 
-async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPreorder) {
+async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPreorder, coupon, estimatedDiscount) {
   const name = document.getElementById('cvs_name').value.trim();
   const phone = document.getElementById('cvs_phone').value.trim();
   const store = document.getElementById('cvs_store').value.trim();
@@ -359,11 +420,27 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       return;
     }
 
+    // 優惠碼在正式送出訂單前重新驗證一次（避免使用者在畫面停留期間優惠碼被後台停用/過期/刪除，
+    // 導致寫進訂單的折扣金額跟實際不符）
+    let discount = 0;
+    let appliedCouponCode = null;
+    if (coupon) {
+      const recheck = await lookupCoupon(coupon.code);
+      if (recheck.valid) {
+        discount = calcCouponDiscount(recheck.coupon, subtotal);
+        appliedCouponCode = recheck.coupon.code;
+      } else {
+        showToast(`優惠碼「${coupon.code}」已無法使用（${recheck.reason}），將以未折扣金額繼續結帳`);
+        appliedCoupon = null; // 清掉購物車頁上暫存的優惠碼，避免下次結帳又用到已失效的
+      }
+    }
+    const total = subtotal - discount + shipping;
+
     const orderNo = genOrderNo();
 
     if (hasPreorder) {
       btn.textContent = '產生圖片中...';
-      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store });
+      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store }, discount > 0 ? { code: appliedCouponCode, discount } : null);
     }
 
     // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），
@@ -385,25 +462,31 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       cvsStoreName: storeName,
       items: cart,
       subtotal: subtotal,
+      couponCode: appliedCouponCode,
+      discountAmount: discount,
       shippingFee: shipping,
-      total: subtotal + shipping,
+      total: total,
       orderDate: orderDateStr,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
     clearCart();
+    appliedCoupon = null;
     refreshCartBadge();
     overlay.remove();
 
     sessionStorage.setItem('kzone_last_order', JSON.stringify({
       orderNo,
-      orderType: hasPreorder ? 'preorder' : 'cvs'
+      orderType: hasPreorder ? 'preorder' : 'cvs',
+      // 把已經讀好的 LINE 連結一起帶過去，讓結帳完成頁不需要再重新跟 Firestore 要一次資料，
+      // 客人一到頁面就能立刻點「聯繫 LINE 官方小編」，不用等網路回應（這是客人反映按了沒反應的主因）
+      lineOfficialUrl: settings.lineOfficialUrl || ''
     }));
 
     if (hasPreorder) {
       showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
       setTimeout(() => {
-        window.open(settings.lineOfficialUrl, '_blank');
+        window.open(normalizeExternalUrl(settings.lineOfficialUrl), '_blank');
         location.href = 'order-complete.html';
       }, 1200);
     } else {

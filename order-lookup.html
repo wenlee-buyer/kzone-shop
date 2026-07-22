@@ -94,7 +94,7 @@ async function init() {
   try {
     const settings = await getSettings();
     const btn = document.getElementById('lineOfficialBtn');
-    if (settings.lineOfficialUrl) btn.href = settings.lineOfficialUrl;
+    if (settings.lineOfficialUrl) btn.href = normalizeExternalUrlLite(settings.lineOfficialUrl);
   } catch (e) {
     // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
   }
@@ -184,6 +184,16 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+// 跟 common.js 裡的 normalizeExternalUrl 邏輯一致：
+// 後台如果忘記在連結前面打 https://，瀏覽器會當成本站底下的相對路徑，點了完全連不出去，
+// 客人只會覺得「按了沒反應」，所以這裡統一補上協定
+function normalizeExternalUrlLite(url) {
+  if (!url) return '';
+  const trimmed = String(url).trim();
+  if (!trimmed) return '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
+  return 'https://' + trimmed;
 }
 function showToastLite(msg) {
   const existing = document.querySelector('.toast');

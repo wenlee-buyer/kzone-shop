@@ -133,24 +133,27 @@
 
 <script src="firebase-config.js"></script>
 <script src="assets/icons.js"></script>
+<script src="assets/common.js"></script>
 <script>
 async function init() {
-  try {
-    const settings = await getSettings();
-    const btn = document.getElementById('lineOfficialBtn');
-    if (settings.lineOfficialUrl) {
-      btn.href = settings.lineOfficialUrl;
-    }
-  } catch (e) {
-    // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
-  }
+  const btn = document.getElementById('lineOfficialBtn');
+  let lineUrlFromSession = '';
 
-  // 讀取剛剛結帳產生的訂單編號/類型（只用一次就清除，避免重整頁面又顯示舊資料）
+  // 讀取剛剛結帳產生的訂單編號/類型（只用一次就清除，避免重整頁面又顯示舊資料）。
+  // 這一段刻意寫在最前面、而且不用 await：客人結帳完是直接被導頁過來的，
+  // 通常會迫不及待馬上點「聯繫 LINE 官方小編」，如果按鈕的連結要等 Firestore 讀完設定才會生效，
+  // 手機網路稍微慢一點客人就會點到還沒設定好的連結（href="#"，點了完全沒反應）。
+  // 所以優先直接用結帳頁那邊已經讀好、隨著這筆訂單一起帶過來的連結，讓按鈕一開始就是可以點的。
   try {
     const raw = sessionStorage.getItem('kzone_last_order');
     if (raw) {
       const lastOrder = JSON.parse(raw);
       sessionStorage.removeItem('kzone_last_order');
+
+      if (lastOrder.lineOfficialUrl) {
+        lineUrlFromSession = lastOrder.lineOfficialUrl;
+        btn.href = normalizeExternalUrl(lineUrlFromSession);
+      }
 
       if (lastOrder.orderNo) {
         document.getElementById('orderNoBox').style.display = 'block';
@@ -180,6 +183,19 @@ async function init() {
     }
   } catch (e) {
     console.error('讀取訂單編號失敗:', e);
+  }
+
+  // sessionStorage 沒有帶連結時才需要額外連 Firestore 補（例如客人直接打開這個網址，
+  // 不是從結帳流程過來的情況），這種情況下按鈕會晚一點才能點，但屬於少數狀況
+  if (!lineUrlFromSession) {
+    try {
+      const settings = await getSettings();
+      if (settings.lineOfficialUrl) {
+        btn.href = normalizeExternalUrl(settings.lineOfficialUrl);
+      }
+    } catch (e) {
+      // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
+    }
   }
 }
 init();

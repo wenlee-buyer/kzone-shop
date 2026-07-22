@@ -174,8 +174,8 @@ function applySettings() {
     heroArt.innerHTML = SVG_MUSHROOM_HERO;
   }
 
-  document.getElementById('lineOfficialBtn').href = settings.lineOfficialUrl;
-  document.getElementById('lineCommunityBtn').href = settings.lineCommunityUrl;
+  document.getElementById('lineOfficialBtn').href = normalizeExternalUrl(settings.lineOfficialUrl);
+  document.getElementById('lineCommunityBtn').href = normalizeExternalUrl(settings.lineCommunityUrl);
   document.getElementById('communityTitle').textContent = settings.lineCommunityTitle;
   document.getElementById('communityText').textContent = settings.lineCommunityText;
 }
