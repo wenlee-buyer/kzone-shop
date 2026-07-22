@@ -24,7 +24,8 @@ const COL = {
   TAGS: 'kzone_tags',
   ORDERS: 'kzone_orders',
   SETTINGS: 'kzone_settings',
-  IMPORTED_IDS: 'kzone_imported_ids' // 記錄已從舊系統匯入過的商品 id，避免重複匯入
+  IMPORTED_IDS: 'kzone_imported_ids', // 記錄已從舊系統匯入過的商品 id，避免重複匯入
+  COUPONS: 'kzone_coupons' // 優惠碼（代碼本身當作 doc id，方便直接用代碼查詢）
 };
 
 // ============================================
@@ -169,6 +170,48 @@ function getProductCategoryIds(product) {
 // 運費規則：滿5000免運，其他一律38元
 function calcShippingFee(orderTotal) {
   return orderTotal >= 5000 ? 0 : 38;
+}
+
+// ============================================
+// 優惠碼
+// ============================================
+
+// 查詢並驗證優惠碼是否可用（代碼統一轉大寫比對，避免客人大小寫輸入不一致查不到）
+// 回傳 { valid: true, coupon } 或 { valid: false, reason }
+async function lookupCoupon(codeInput) {
+  const code = (codeInput || '').trim().toUpperCase();
+  if (!code) return { valid: false, reason: '請輸入優惠碼' };
+
+  let doc;
+  try {
+    doc = await db.collection(COL.COUPONS).doc(code).get();
+  } catch (e) {
+    return { valid: false, reason: '查詢優惠碼失敗，請稍後再試' };
+  }
+
+  if (!doc.exists) return { valid: false, reason: '查無此優惠碼' };
+  const coupon = { code: doc.id, ...doc.data() };
+
+  if (coupon.active === false) return { valid: false, reason: '此優惠碼已停用' };
+
+  const now = Date.now();
+  if (coupon.startAt && now < coupon.startAt) return { valid: false, reason: '此優惠碼尚未開始，請稍後再試' };
+  if (coupon.endAt && now > coupon.endAt) return { valid: false, reason: '此優惠碼已過期' };
+
+  return { valid: true, coupon };
+}
+
+// 依優惠碼計算折扣金額：只折商品小計（subtotal），不折運費。
+// 折扣金額不會超過小計本身（避免百分比算出來的數字或設定錯誤讓小計變負數）
+function calcCouponDiscount(coupon, subtotal) {
+  if (!coupon) return 0;
+  let discount = 0;
+  if (coupon.discountType === 'percent') {
+    discount = Math.round(subtotal * (coupon.discountValue / 100));
+  } else {
+    discount = coupon.discountValue;
+  }
+  return Math.max(0, Math.min(discount, subtotal));
 }
 
 // 結帳前驗證購物車內所有商品的庫存是否仍然足夠

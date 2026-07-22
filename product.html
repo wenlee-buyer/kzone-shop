@@ -223,7 +223,7 @@ function render() {
         ${productCats.map(c => `<span class="dbadge">${escapeHtml(c.name)}</span>`).join('')}
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
-      <div class="dprice">${formatPrice(product.price)}</div>
+      <div class="dprice" id="dPrice">${formatPrice(getStylePrice(product, selectedStyle))}</div>
       ${product.recommendation ? `<div class="drec">✨ 小編推薦<br>${escapeHtml(product.recommendation)}</div>` : ''}
       ${buyAreaHtml}
     </div>
@@ -266,6 +266,8 @@ function render() {
         selectedStyle = el.dataset.style;
         qty = 1;
         document.getElementById('qtyNum').textContent = qty;
+        // 不同款式可能價格不同，切換款式時要同步更新畫面上顯示的價格
+        document.getElementById('dPrice').textContent = formatPrice(getStylePrice(product, selectedStyle));
       });
     });
   }
@@ -338,7 +340,7 @@ function doAddToCart() {
   addToCart({
     productId: product.id,
     name: product.name,
-    price: product.price,
+    price: getStylePrice(product, selectedStyle), // 不同款式可能有各自的價格，用選定款式的實際價格
     style: selectedStyle || '',
     qty: qty,
     image: (product.images && product.images[0]) || '',
