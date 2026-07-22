@@ -169,16 +169,20 @@ function renderOrderCard(order) {
     </div>
   ` : '';
 
+  const couponLine = (order.discountAmount && order.discountAmount > 0)
+    ? ` ・ 優惠碼「${escapeHtml(order.couponCode || '')}」折抵：-${formatPrice(order.discountAmount)}`
+    : '';
+
   const cvsInfo = isCvs ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
       取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
-      商品小計：${formatPrice(order.subtotal)} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}
+      商品小計：${formatPrice(order.subtotal)}${couponLine} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}
     </div>
   ` : (order.cvsName ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
       （預購客人已預填取貨資訊，供小編確認參考，最終以 LINE 溝通為準）<br>
       取件人：${escapeHtml(order.cvsName)} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
-      商品小計：${formatPrice(order.subtotal)} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}
+      商品小計：${formatPrice(order.subtotal)}${couponLine} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}
     </div>
   ` : '');
 

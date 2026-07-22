@@ -146,6 +146,7 @@ function renderProductCard(product, watermarkText) {
     : `${icon('photo', 30)}`;
   const soldOut = isProductSoldOut(product);
   const soldOutOverlay = soldOut ? `<div class="sold-out-overlay">已售完</div>` : '';
+  const priceInfo = getDisplayPriceInfo(product);
 
   // 判斷是否為14天內新上架（顯示NEW緞帶）
   const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
@@ -166,7 +167,7 @@ function renderProductCard(product, watermarkText) {
       <div class="pinfo">
         <div class="pname">${escapeHtml(product.name)}</div>
         <div class="psrc">${escapeHtml(product.categoryName || '')}</div>
-        <div class="pprice" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${formatPrice(product.price)}</div>
+        <div class="pprice" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}</div>
       </div>
     </div>
   `;
@@ -181,6 +182,18 @@ function escapeHtml(str) {
 
 function goToProduct(id) {
   window.location.href = `product.html?id=${id}`;
+}
+
+// ---- 外部連結網址正規化 ----
+// 後台填 LINE 官方帳號/社群連結時，如果忘記打 https:// （例如只填 lin.ee/xxx 或 line.me/ti/p/xxx），
+// 瀏覽器會把它當成「目前網站底下的相對路徑」，點了完全不會跳轉、也不會報錯，客人只會覺得按鈕沒反應。
+// 這裡統一補上協定，讓連結一定能正確導向外部網站。
+function normalizeExternalUrl(url) {
+  if (!url) return '';
+  const trimmed = String(url).trim();
+  if (!trimmed) return '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed; // 已經有協定（https:, line:, tel:...），原樣使用
+  return 'https://' + trimmed;
 }
 
 // ---- Toast 提示 ----
@@ -237,13 +250,42 @@ function sortBySortOrderSoldOutLast(products, categoryId) {
   });
 }
 
-// ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock}物件陣列）----
+// ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock, price}物件陣列）----
+// price 是選填的「這個款式專屬的價格」，沒設定（null/undefined）就是跟商品共用同一個 price
 function normalizeStyles(styles) {
   if (!styles || !Array.isArray(styles)) return [];
   return styles.map(s => {
-    if (typeof s === 'string') return { name: s, stock: null };
-    return { name: s.name || '', stock: s.stock ?? null };
+    if (typeof s === 'string') return { name: s, stock: null, price: null };
+    return { name: s.name || '', stock: s.stock ?? null, price: s.price ?? null };
   }).filter(s => s.name);
+}
+
+// 取得指定款式（或無款式商品本身）實際要收的價格：
+// 款式有自己的 price 就用款式的，沒有就退回商品共用的 price
+function getStylePrice(product, styleName) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0 && styleName) {
+    const style = styles.find(s => s.name === styleName);
+    if (style && style.price !== null && style.price !== undefined) return style.price;
+  }
+  return product.price;
+}
+
+// 取得商品在商品卡/列表上要顯示的價格資訊：
+// 如果各款式價格都一樣（或沒有款式），回傳單一價格；
+// 如果款式價格不同，回傳最低價，並標記 isRange，前台顯示可以加上「起」字樣
+function getDisplayPriceInfo(product) {
+  const styles = normalizeStyles(product.styles);
+  const stylePrices = styles
+    .map(s => (s.price !== null && s.price !== undefined) ? s.price : product.price)
+    .filter(p => p !== null && p !== undefined);
+
+  if (stylePrices.length === 0) {
+    return { price: product.price, isRange: false };
+  }
+  const min = Math.min(...stylePrices);
+  const max = Math.max(...stylePrices);
+  return { price: min, isRange: min !== max };
 }
 
 // ---- 庫存/售完判斷共用邏輯 ----

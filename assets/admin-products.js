@@ -147,7 +147,8 @@ function renderProductRow(p) {
     stockInfo = styles.map(s => {
       const soldOut = s.stock !== null && s.stock !== undefined && s.stock <= 0;
       const stockText = s.stock === null || s.stock === undefined ? '不限' : s.stock;
-      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}`;
+      const priceText = s.price !== null && s.price !== undefined ? `・${formatPrice(s.price)}` : '';
+      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}${priceText}`;
     }).join('<br>');
   } else if (p.stock !== null && p.stock !== undefined) {
     stockInfo = `庫存：${p.stock}`;
@@ -361,7 +362,7 @@ function openProductEditor(product, opts = {}) {
         </div>
 
         <div class="field">
-          <label class="field-label">款式（純文字，不同款式同價，可新增多個。新增款式後，庫存會改成各款式分開計算）</label>
+          <label class="field-label">款式（可新增多個，庫存會改成各款式分開計算。價格欄位留空表示跟上面的「價格」一樣，填了數字才會覆蓋成該款式專屬的價格）</label>
           <div id="pf_stylesList"></div>
           <button class="btn-secondary" id="pf_addStyleBtn" style="margin-top:4px">+ 新增款式</button>
         </div>
@@ -377,11 +378,11 @@ function openProductEditor(product, opts = {}) {
   `;
   document.body.appendChild(overlay);
 
-  // 款式列表渲染（每個款式可各自設定庫存；相容舊資料：舊版 styles 是純字串陣列）
+  // 款式列表渲染（每個款式可各自設定庫存跟價格；相容舊資料：舊版 styles 是純字串陣列，或沒有 price 欄位）
   const stylesListEl = document.getElementById('pf_stylesList');
   let styles = (product?.styles || []).map(s => {
-    if (typeof s === 'string') return { name: s, stock: '' };
-    return { name: s.name || '', stock: s.stock ?? '' };
+    if (typeof s === 'string') return { name: s, stock: '', price: '' };
+    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '' };
   });
 
   function toggleSimpleStockVisibility() {
@@ -393,6 +394,7 @@ function openProductEditor(product, opts = {}) {
       <div class="style-input-row">
         <input type="text" value="${escapeHtml(s.name)}" placeholder="款式名稱" data-style-name-idx="${i}" style="flex:2">
         <input type="number" value="${escapeHtml(String(s.stock))}" placeholder="庫存(留空不限)" data-style-stock-idx="${i}" style="flex:1; min-width:0">
+        <input type="number" value="${escapeHtml(String(s.price))}" placeholder="價格(留空同上)" data-style-price-idx="${i}" style="flex:1; min-width:0">
         <button class="btn-icon danger" data-remove-style="${i}">移除</button>
       </div>
     `).join('');
@@ -404,6 +406,11 @@ function openProductEditor(product, opts = {}) {
     stylesListEl.querySelectorAll('[data-style-stock-idx]').forEach(input => {
       input.addEventListener('input', (e) => {
         styles[parseInt(e.target.dataset.styleStockIdx)].stock = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-price-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.stylePriceIdx)].price = e.target.value;
       });
     });
     stylesListEl.querySelectorAll('[data-remove-style]').forEach(btn => {
@@ -418,7 +425,7 @@ function openProductEditor(product, opts = {}) {
   toggleSimpleStockVisibility();
 
   document.getElementById('pf_addStyleBtn').addEventListener('click', () => {
-    styles.push({ name: '', stock: '' });
+    styles.push({ name: '', stock: '', price: '' });
     renderStylesList();
     toggleSimpleStockVisibility();
   });
@@ -692,11 +699,17 @@ async function saveProduct(styles) {
     : 9999;
   const cleanStyles = styles
     .filter(s => s.name.trim())
-    .map(s => ({ name: s.name.trim(), stock: s.stock === '' || s.stock === null ? null : parseInt(s.stock) }));
+    .map(s => ({
+      name: s.name.trim(),
+      stock: s.stock === '' || s.stock === null || s.stock === undefined ? null : parseInt(s.stock),
+      // price 留空就是 null，代表這個款式跟商品共用同一個價格
+      price: s.price === '' || s.price === null || s.price === undefined ? null : parseFloat(s.price)
+    }));
 
   if (!name) { showToast('請輸入商品名稱'); return; }
   if (categoryIds.length === 0) { showToast('請至少選擇一個來源分類'); return; }
   if (isNaN(price) || price < 0) { showToast('請輸入正確的價格'); return; }
+  if (cleanStyles.some(s => s.price !== null && (isNaN(s.price) || s.price < 0))) { showToast('款式的價格格式不正確，請確認'); return; }
   if (productsPageState.pendingImages.length === 0) { showToast('請至少上傳一張商品圖片'); return; }
 
   const saveBtn = document.getElementById('pf_saveBtn');

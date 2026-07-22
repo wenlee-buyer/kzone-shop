@@ -138,8 +138,9 @@ async function saveAllSettings() {
       heroTitle: document.getElementById('st_heroTitle').value,
       heroSubtitle: document.getElementById('st_heroSubtitle').value,
       heroImage: heroImageUrl,
-      lineOfficialUrl: document.getElementById('st_lineOfficialUrl').value.trim(),
-      lineCommunityUrl: document.getElementById('st_lineCommunityUrl').value.trim(),
+      // 存檔時就先補上 https://，避免忘記打協定導致前台連結點了沒反應（瀏覽器會當成站內相對路徑）
+      lineOfficialUrl: normalizeExternalUrl(document.getElementById('st_lineOfficialUrl').value.trim()),
+      lineCommunityUrl: normalizeExternalUrl(document.getElementById('st_lineCommunityUrl').value.trim()),
       lineCommunityTitle: document.getElementById('st_lineCommunityTitle').value.trim(),
       lineCommunityText: document.getElementById('st_lineCommunityText').value,
       firstCartReminderText: document.getElementById('st_firstCartReminderText').value,
