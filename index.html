@@ -98,6 +98,7 @@
     <a class="line-arrow" id="lineOfficialBtn" href="#" target="_blank" aria-label="前往LINE官方帳號"><span class="ico" data-icon="chevron-right" data-size="18"></span></a>
   </div>
 </div>
+<div id="lineIdFallbackWrap" style="margin:-8px 16px 16px"></div>
 
 <div class="line-block" style="border-color:var(--c-rose)">
   <div class="container">
@@ -176,6 +177,7 @@ function applySettings() {
 
   document.getElementById('lineOfficialBtn').href = normalizeExternalUrl(settings.lineOfficialUrl);
   document.getElementById('lineCommunityBtn').href = normalizeExternalUrl(settings.lineCommunityUrl);
+  renderLineIdFallback(settings.lineOfficialId);
   document.getElementById('communityTitle').textContent = settings.lineCommunityTitle;
   document.getElementById('communityText').textContent = settings.lineCommunityText;
 }

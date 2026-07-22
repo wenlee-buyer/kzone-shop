@@ -120,6 +120,7 @@
       </svg>
       聯繫 LINE 官方小編
     </a>
+    <div id="lineIdFallbackWrap"></div>
     <a href="order-lookup.html" class="btn-back" style="margin-top:10px">查詢出貨狀態</a>
     <a href="index.html" class="btn-back" style="margin-top:10px">繼續瀏覽商品</a>
   </div>
@@ -153,6 +154,9 @@ async function init() {
       if (lastOrder.lineOfficialUrl) {
         lineUrlFromSession = lastOrder.lineOfficialUrl;
         btn.href = normalizeExternalUrl(lineUrlFromSession);
+      }
+      if (lastOrder.lineOfficialId) {
+        renderLineIdFallback(lastOrder.lineOfficialId);
       }
 
       if (lastOrder.orderNo) {
@@ -192,6 +196,9 @@ async function init() {
       const settings = await getSettings();
       if (settings.lineOfficialUrl) {
         btn.href = normalizeExternalUrl(settings.lineOfficialUrl);
+      }
+      if (settings.lineOfficialId) {
+        renderLineIdFallback(settings.lineOfficialId);
       }
     } catch (e) {
       // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示

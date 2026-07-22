@@ -79,6 +79,7 @@
     </svg>
     聯繫 LINE 官方小編
   </a>
+  <div id="lineIdFallbackWrap"></div>
 
   <div class="trademark-notice" style="margin-top:24px">
     MapleStory® and related characters are trademarks of NEXON.<br>
@@ -95,11 +96,48 @@ async function init() {
     const settings = await getSettings();
     const btn = document.getElementById('lineOfficialBtn');
     if (settings.lineOfficialUrl) btn.href = normalizeExternalUrlLite(settings.lineOfficialUrl);
+    if (settings.lineOfficialId) renderLineIdFallbackLite(settings.lineOfficialId);
   } catch (e) {
     // 讀取設定失敗時，按鈕連結維持空白，不影響頁面顯示
   }
 }
 init();
+
+// 跟 common.js 的 copyTextToClipboard/renderLineIdFallback 邏輯一致：
+// 這一頁刻意不載入 common.js，所以自己補一份極簡版
+async function copyTextToClipboardLite(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+function renderLineIdFallbackLite(lineOfficialId) {
+  const wrap = document.getElementById('lineIdFallbackWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="line-id-fallback">
+      按鈕沒反應？長按複製 LINE ID 手動搜尋加入：<span class="line-id-copy" id="lineIdCopyText">${escapeHtml(lineOfficialId)}</span>
+    </div>
+  `;
+  document.getElementById('lineIdCopyText').addEventListener('click', async () => {
+    const ok = await copyTextToClipboardLite(lineOfficialId);
+    showToastLite(ok ? '已複製！請到 LINE 搜尋加入好友' : '複製失敗，請手動長按選取文字複製');
+  });
+}
 
 document.getElementById('lookupBtn').addEventListener('click', doLookup);
 document.getElementById('lk_orderNo').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLookup(); });

@@ -480,7 +480,8 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       orderType: hasPreorder ? 'preorder' : 'cvs',
       // 把已經讀好的 LINE 連結一起帶過去，讓結帳完成頁不需要再重新跟 Firestore 要一次資料，
       // 客人一到頁面就能立刻點「聯繫 LINE 官方小編」，不用等網路回應（這是客人反映按了沒反應的主因）
-      lineOfficialUrl: settings.lineOfficialUrl || ''
+      lineOfficialUrl: settings.lineOfficialUrl || '',
+      lineOfficialId: settings.lineOfficialId || ''
     }));
 
     if (hasPreorder) {

@@ -57,6 +57,7 @@ const DEFAULT_SETTINGS = {
   heroSubtitle: '最新周邊空運到台\n數量有限・先搶先贏！',
   heroImage: '', // 空字串 = 使用預設蘑菇插圖
   lineOfficialUrl: 'https://lin.ee/r11kJmF',
+  lineOfficialId: '', // LINE 官方帳號的搜尋ID（例如 @aibou），給「按鈕點了沒反應」的客人手動搜尋加入用的備援
   lineCommunityUrl: 'https://line.me/ti/g2/M2vucvJ9fCdggxca09QagYGsOAM2ll58btnz1A',
   lineCommunityTitle: '【K.Zone】楓之谷🍁週邊補給站',
   lineCommunityText: '加入社群獲得第一手預購/到貨/現貨上架消息，群組還有優惠價喔!\n(除此之外平常很安靜不會打擾)',
