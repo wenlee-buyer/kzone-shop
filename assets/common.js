@@ -196,6 +196,48 @@ function normalizeExternalUrl(url) {
   return 'https://' + trimmed;
 }
 
+// ---- 複製文字到剪貼簿（優先用 Clipboard API，某些較舊瀏覽器/非https環境不支援時退回傳統做法）----
+// 用途：客人點「聯繫LINE官方小編」按鈕如果剛好被瀏覽器擋住跳轉（常見於Instagram/LINE本身的內建瀏覽器），
+// 讓客人可以直接複製官方帳號ID，自己到LINE App裡搜尋加入，不需要依賴跳轉連結
+async function copyTextToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
+// 渲染「LINE按鈕點了沒反應時，長按複製官方帳號ID」的備援區塊。
+// 頁面上要有一個 id="lineIdFallbackWrap" 的容器，這裡才會把內容塞進去；
+// 沒設定 lineOfficialId（後台留空）時什麼都不顯示，不佔版面
+function renderLineIdFallback(lineOfficialId) {
+  const wrap = document.getElementById('lineIdFallbackWrap');
+  if (!wrap) return;
+  if (!lineOfficialId) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="line-id-fallback">
+      按鈕沒反應？長按複製 LINE ID 手動搜尋加入：<span class="line-id-copy" id="lineIdCopyText">${escapeHtml(lineOfficialId)}</span>
+    </div>
+  `;
+  document.getElementById('lineIdCopyText').addEventListener('click', async () => {
+    const ok = await copyTextToClipboard(lineOfficialId);
+    showToast(ok ? '已複製！請到 LINE 搜尋加入好友' : '複製失敗，請手動長按選取文字複製');
+  });
+}
+
 // ---- Toast 提示 ----
 function showToast(msg, duration = 2200) {
   const existing = document.querySelector('.toast');

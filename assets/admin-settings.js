@@ -62,6 +62,10 @@ async function renderSettingsPage() {
         <input type="text" id="st_lineOfficialUrl" value="${escapeHtml(s.lineOfficialUrl)}">
       </div>
       <div class="field">
+        <label class="field-label">LINE 官方帳號 ID（在 LINE 加好友頁面「設定 > 帳號」可以查到，格式例如 @aibou。有些客人點連結沒反應時，前台會顯示這個ID讓客人自己到 LINE 搜尋加入）</label>
+        <input type="text" id="st_lineOfficialId" value="${escapeHtml(s.lineOfficialId || '')}" placeholder="例：@aibou">
+      </div>
+      <div class="field">
         <label class="field-label">LINE 社群連結</label>
         <input type="text" id="st_lineCommunityUrl" value="${escapeHtml(s.lineCommunityUrl)}">
       </div>
@@ -140,6 +144,7 @@ async function saveAllSettings() {
       heroImage: heroImageUrl,
       // 存檔時就先補上 https://，避免忘記打協定導致前台連結點了沒反應（瀏覽器會當成站內相對路徑）
       lineOfficialUrl: normalizeExternalUrl(document.getElementById('st_lineOfficialUrl').value.trim()),
+      lineOfficialId: document.getElementById('st_lineOfficialId').value.trim(),
       lineCommunityUrl: normalizeExternalUrl(document.getElementById('st_lineCommunityUrl').value.trim()),
       lineCommunityTitle: document.getElementById('st_lineCommunityTitle').value.trim(),
       lineCommunityText: document.getElementById('st_lineCommunityText').value,
