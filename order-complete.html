@@ -179,9 +179,15 @@ async function init() {
       } else if (lastOrder.orderType === 'preorder') {
         document.getElementById('completeSub').innerHTML = `
           感謝您的訂購 🍄<br>
-          <strong>請立即點選下方連結私訊官方確認訂單與訂金</strong><br>
+          <strong>請將剛剛下載的訂單圖片傳送給官方小編確認訂單與訂金</strong><br>
           小編確認商品後<br>
           會盡快告知您預計到貨日期
+        `;
+        document.getElementById('orderNoticeText').innerHTML = `
+          ・ 預購商品需將訂單圖片傳送給小編，並經確認後才算成立<br>
+          ・ 若尚未傳送圖片，請點選下方按鈕聯繫官方小編<br>
+          ・ 確認訂金與到貨日期以小編回覆為準<br>
+          ・ 請保存訂單圖片，方便對照確認
         `;
       }
     }

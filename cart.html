@@ -177,7 +177,7 @@ function render() {
     html += `
       <div class="checkout-note">
         全部商品皆為現貨，請填寫超商取貨資訊以完成結帳，<br>
-        <strong>等待小編確認商品數量與金額後，才算下單成功！</strong>
+        <strong>商品皆為取貨付款，現貨商品二個工作天內會出貨</strong>
       </div>
 
       <button class="btn-primary" id="openCvsFormBtn" style="background:var(--c-coffee)">結帳並填寫超商取貨資訊</button>
@@ -485,13 +485,17 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
     }));
 
     if (hasPreorder) {
-      showToast('訂單圖片已下載！即將前往 LINE 官方帳號');
+      // 預購一定要提醒客人「主動把剛剛下載的圖片傳過去」，不然很多人開了LINE聊天室卻忘記真的送出圖片，
+      // 官方帳號那邊完全收不到，就一直卡在等待確認的狀態
+      showToast('訂單圖片已下載！請務必將圖片傳送給官方小編確認');
       setTimeout(() => {
         window.open(normalizeExternalUrl(settings.lineOfficialUrl), '_blank');
         location.href = 'order-complete.html';
       }, 1200);
     } else {
-      showToast('訂單已送出！小編確認後會盡快為您安排出貨');
+      // 現貨訂單其實已經確定成立（庫存已扣、訂單已寫入），不需要讓客人誤以為還要等小編審核才算數，
+      // 只是實際出貨會在2個工作天內處理，用詞要肯定、跟結帳完成頁的說法一致
+      showToast('訂單已送出成功！我們會在2個工作天內為您安排出貨');
       setTimeout(() => location.href = 'order-complete.html', 1200);
     }
 
