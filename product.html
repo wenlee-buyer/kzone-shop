@@ -44,6 +44,15 @@
 .stock-note { background: #fff8f5; border: 0.5px solid var(--c-orange); border-radius: 10px; padding: 11px 13px; margin-top: 14px; font-size: 11px; color: var(--c-rose-text); line-height: 1.7; white-space: pre-line; }
 .sticky-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: var(--c-bg); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 0.5px solid var(--c-blush); z-index: 60; }
 .sticky-bottom .container { max-width: 480px; margin: 0 auto; }
+.dimg-main { cursor: zoom-in; }
+.lightbox-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.94); z-index: 300; display: flex; align-items: center; justify-content: center; }
+.lightbox-img { max-width: 94vw; max-height: 88vh; object-fit: contain; touch-action: pinch-zoom; }
+.lightbox-close { position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px; width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+.lightbox-nav.prev { left: 10px; }
+.lightbox-nav.next { right: 10px; }
+.lightbox-counter { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.8); font-size: 12px; }
+.dimg-zoom-hint { position: absolute; bottom: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 @media (min-width: 1024px) {
   .detail-imgs { padding: 24px; max-width: 700px; margin: 0 auto; justify-content: center; }
   .detail-info { padding: 4px 24px 100px; max-width: 700px; margin: 0 auto; }
@@ -162,9 +171,12 @@ function render() {
     const first = media[0];
     imgsHtml = `
       <div class="detail-imgs" id="imgStrip">
-        <div class="dimg-main" id="mainImgWrap">
+        <div class="dimg-main" id="mainImgWrap" onclick="handleMainImgClick()">
           <img src="${first.type === 'image' ? escapeHtml(first.url) : ''}" id="mainImg" alt="${escapeHtml(product.name)}" style="${first.type === 'video' ? 'display:none' : ''}">
           <video id="mainVideo" src="${first.type === 'video' ? escapeHtml(first.url) : ''}" controls playsinline style="${first.type === 'video' ? '' : 'display:none'}"></video>
+          <div class="dimg-zoom-hint" id="dimgZoomHint" style="${first.type === 'video' ? 'display:none' : ''}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-6-6"/><path d="M10 7v6M7 10h6"/></svg>
+          </div>
         </div>
         ${media.map((m, i) => `
           <div class="dimg-thumb ${i===0?'active':''}" data-idx="${i}" onclick="switchImg(${i})">
@@ -280,24 +292,86 @@ function switchImg(idx) {
   const item = media[idx];
   if (!item) return;
 
+  currentImgIndex = idx; // 記住目前顯示的是哪一張，點主圖放大時才知道要放大哪一張
+
   const mainImg = document.getElementById('mainImg');
   const mainVideo = document.getElementById('mainVideo');
+  const zoomHint = document.getElementById('dimgZoomHint');
 
   if (item.type === 'video') {
     mainVideo.pause();
     mainVideo.src = item.url;
     mainVideo.style.display = '';
     mainImg.style.display = 'none';
+    if (zoomHint) zoomHint.style.display = 'none';
   } else {
     mainVideo.pause();
     mainVideo.style.display = 'none';
     mainImg.style.display = '';
     mainImg.src = item.url;
+    if (zoomHint) zoomHint.style.display = '';
   }
 
   document.querySelectorAll('.dimg-thumb').forEach((el, i) => {
     el.classList.toggle('active', i === idx);
   });
+}
+
+// ============================================
+// 圖片單獨放大檢視（點主圖時彈出全螢幕大圖，方便看清楚商品細節）
+// ============================================
+function handleMainImgClick() {
+  const media = window.__productMedia || [];
+  const current = media[currentImgIndex];
+  if (!current || current.type !== 'image') return; // 影片本身已經有播放器控制項，點擊不需要另外放大
+  openImageLightbox(currentImgIndex);
+}
+
+function getLightboxImageIndices() {
+  const media = window.__productMedia || [];
+  return media.map((m, i) => (m.type === 'image' ? i : null)).filter(i => i !== null);
+}
+
+function openImageLightbox(mediaIdx) {
+  const media = window.__productMedia || [];
+  const imageIndices = getLightboxImageIndices();
+  let pos = imageIndices.indexOf(mediaIdx);
+  if (pos === -1) pos = 0;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.id = 'lightboxOverlay';
+
+  function render() {
+    const item = media[imageIndices[pos]];
+    overlay.innerHTML = `
+      <img class="lightbox-img" src="${escapeHtml(item.url)}" alt="${escapeHtml(product.name)}">
+      <button class="lightbox-close" id="lightboxCloseBtn" aria-label="關閉">×</button>
+      ${imageIndices.length > 1 ? `
+        <button class="lightbox-nav prev" id="lightboxPrevBtn" aria-label="上一張">‹</button>
+        <button class="lightbox-nav next" id="lightboxNextBtn" aria-label="下一張">›</button>
+        <div class="lightbox-counter">${pos + 1} / ${imageIndices.length}</div>
+      ` : ''}
+    `;
+    document.getElementById('lightboxCloseBtn').addEventListener('click', closeLightbox);
+    if (imageIndices.length > 1) {
+      document.getElementById('lightboxPrevBtn').addEventListener('click', (e) => { e.stopPropagation(); pos = (pos - 1 + imageIndices.length) % imageIndices.length; render(); });
+      document.getElementById('lightboxNextBtn').addEventListener('click', (e) => { e.stopPropagation(); pos = (pos + 1) % imageIndices.length; render(); });
+    }
+  }
+  render();
+
+  function closeLightbox() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKeyDown);
+  }
+  function onKeyDown(e) {
+    if (e.key === 'Escape') closeLightbox();
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox(); });
+  document.addEventListener('keydown', onKeyDown);
+
+  document.body.appendChild(overlay);
 }
 
 async function handleAddToCart() {
