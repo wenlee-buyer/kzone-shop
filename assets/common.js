@@ -438,6 +438,89 @@ async function deductStockForOrder(cartItems) {
   });
 }
 
+// ---- 後台編輯訂單時，依「編輯前」跟「編輯後」的商品內容差異調整庫存 ----
+// 客人結帳時已經扣過一次庫存了，之後如果小編幫忙加/減商品數量，庫存也要跟著補扣或退回，
+// 不然庫存數字會跟實際不符。同一個商品同一個款式只看「數量差」，
+// 不管訂單裡是拆成好幾行還是合併成一行，加總後的差異才是真正要調整的量。
+async function adjustStockForOrderEdit(oldItems, newItems) {
+  function buildQtyMap(items) {
+    const map = {};
+    for (const item of items) {
+      const key = item.productId + '::' + (item.style || '');
+      map[key] = (map[key] || 0) + item.qty;
+    }
+    return map;
+  }
+  const oldMap = buildQtyMap(oldItems || []);
+  const newMap = buildQtyMap(newItems || []);
+  const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+
+  // delta > 0 代表訂單裡這個商品款式變多了，要「多扣」庫存；
+  // delta < 0 代表變少了（或整項被移除），要把庫存「退回去」
+  const deltas = [];
+  for (const key of allKeys) {
+    const delta = (newMap[key] || 0) - (oldMap[key] || 0);
+    if (delta === 0) continue;
+    const sepIdx = key.indexOf('::');
+    deltas.push({ productId: key.slice(0, sepIdx), style: key.slice(sepIdx + 2), delta });
+  }
+  if (deltas.length === 0) return;
+
+  const productIds = [...new Set(deltas.map(d => d.productId))];
+
+  await db.runTransaction(async (tx) => {
+    const productDocs = {};
+    for (const pid of productIds) {
+      const ref = db.collection(COL.PRODUCTS).doc(pid);
+      const doc = await tx.get(ref);
+      if (doc.exists) productDocs[pid] = { ref, data: doc.data() };
+    }
+    for (const pid of productIds) {
+      const entry = productDocs[pid];
+      if (entry) entry.data.styles = normalizeStyles(entry.data.styles);
+    }
+
+    // 先檢查「需要多扣庫存」的部分，庫存不夠就整批中止，不要扣一半
+    const problems = [];
+    for (const d of deltas) {
+      if (d.delta <= 0) continue; // 退回庫存不用檢查夠不夠
+      const entry = productDocs[d.productId];
+      if (!entry) continue; // 商品可能已經被刪除，找不到就跳過，不擋整筆編輯
+      const data = entry.data;
+      const productName = data.name || '商品';
+      if (data.styles && data.styles.length > 0) {
+        const idx = data.styles.findIndex(s => s.name === d.style);
+        if (idx === -1) continue;
+        const stock = data.styles[idx].stock;
+        if (stock !== null && stock !== undefined && d.delta > stock) {
+          problems.push(`「${productName}${d.style ? '（'+d.style+'）' : ''}」庫存只剩 ${stock} 件，不夠多扣 ${d.delta} 件`);
+        }
+      } else if (data.stock !== null && data.stock !== undefined && d.delta > data.stock) {
+        problems.push(`「${productName}」庫存只剩 ${data.stock} 件，不夠多扣 ${d.delta} 件`);
+      }
+    }
+    if (problems.length > 0) throw new StockInsufficientError(problems);
+
+    for (const d of deltas) {
+      const entry = productDocs[d.productId];
+      if (!entry) continue;
+      const data = entry.data;
+      if (data.styles && data.styles.length > 0) {
+        const idx = data.styles.findIndex(s => s.name === d.style);
+        if (idx !== -1 && data.styles[idx].stock !== null && data.styles[idx].stock !== undefined) {
+          data.styles[idx].stock = data.styles[idx].stock - d.delta;
+        }
+      } else if (data.stock !== null && data.stock !== undefined) {
+        data.stock = data.stock - d.delta;
+      }
+    }
+    for (const pid of productIds) {
+      const entry = productDocs[pid];
+      if (entry) tx.update(entry.ref, { styles: entry.data.styles || [], stock: entry.data.stock ?? null });
+    }
+  });
+}
+
 // ---- 產生訂單編號（給客人截圖對照用，非資料庫 doc id）----
 function genOrderNo() {
   const d = new Date();

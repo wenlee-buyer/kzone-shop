@@ -132,6 +132,7 @@ function renderOrderColumn(container, orders, colType) {
   orders.forEach(order => {
     document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
     document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
+    document.getElementById(`edit-order-${order.id}`)?.addEventListener('click', () => openEditOrderModal(order));
     document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
       const detail = document.getElementById(`detail-order-${order.id}`);
       detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
@@ -172,17 +173,23 @@ function renderOrderCard(order) {
   const couponLine = (order.discountAmount && order.discountAmount > 0)
     ? ` ・ 優惠碼「${escapeHtml(order.couponCode || '')}」折抵：-${formatPrice(order.discountAmount)}`
     : '';
+  const manualDiscountLine = (order.manualDiscount && order.manualDiscount > 0)
+    ? ` ・ 額外折抵：-${formatPrice(order.manualDiscount)}`
+    : '';
+  const depositLine = (order.depositReceived && order.depositReceived > 0)
+    ? `<br>已收訂金：${formatPrice(order.depositReceived)}`
+    : '';
 
   const cvsInfo = isCvs ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
       取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
-      商品小計：${formatPrice(order.subtotal)}${couponLine} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}
+      商品小計：${formatPrice(order.subtotal)}${couponLine}${manualDiscountLine} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}${depositLine}
     </div>
   ` : (order.cvsName ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
       （預購客人已預填取貨資訊，供小編確認參考，最終以 LINE 溝通為準）<br>
       取件人：${escapeHtml(order.cvsName)} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
-      商品小計：${formatPrice(order.subtotal)}${couponLine} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}
+      商品小計：${formatPrice(order.subtotal)}${couponLine}${manualDiscountLine} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}${depositLine}
     </div>
   ` : '');
 
@@ -198,6 +205,7 @@ function renderOrderCard(order) {
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
+          ${!isShipped ? `<button class="btn-icon" id="edit-order-${order.id}" title="編輯商品/金額" style="font-size:11px; padding:6px 8px">編輯</button>` : ''}
           <button class="btn-icon ${isShipped ? '' : 'active-accent'}" id="ship-order-${order.id}" title="${isShipped ? '修改出貨資訊' : '標記出貨'}" style="font-size:11px; padding:6px 8px">
             ${isShipped ? '修改出貨' : '標記出貨'}
           </button>
@@ -305,6 +313,318 @@ function openShipModal(order) {
       btn.textContent = isShipped ? '更新出貨資訊' : '確認標記出貨';
     }
   });
+}
+
+// ============================================
+// 編輯訂單（商品內容 + 金額）：只有「未出貨」訂單能編輯
+// 增減商品/數量時會自動調整對應商品的庫存，額外折抵金額跟已收訂金只是記錄用，不影響庫存
+// ============================================
+let editOrderState = {
+  order: null,
+  items: [], // 編輯中的商品清單（複製自 order.items，深複製避免直接改到原始資料）
+  allProducts: null // 快取一次「+新增商品」用的商品清單，避免每次開啟都重新打 Firestore
+};
+
+function openEditOrderModal(order) {
+  editOrderState.order = order;
+  editOrderState.items = (order.items || []).map(item => ({ ...item }));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'editOrderModalOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:520px">
+      <div class="modal-header">
+        <span class="modal-title">編輯訂單${order.orderNo ? `（${escapeHtml(order.orderNo)}）` : ''}</span>
+        <button class="modal-close" id="closeEditOrderModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:var(--c-coffee)">
+          客人：${escapeHtml(order.lineName || '未提供')}${order.cvsName ? ` ・ 取件人：${escapeHtml(order.cvsName)}` : ''}
+        </div>
+
+        <div class="field">
+          <label class="field-label">訂單商品</label>
+          <div id="editOrderItemsList"></div>
+          <button class="btn-secondary" id="addOrderItemBtn" style="margin-top:6px">+ 新增商品</button>
+        </div>
+
+        <div class="field">
+          <label class="field-label">額外折抵金額（選填，跟優惠碼折抵分開計算，例如客訴補償或人情折扣）</label>
+          <input type="number" id="eo_manualDiscount" value="${order.manualDiscount ?? 0}" min="0">
+        </div>
+        <div class="field">
+          <label class="field-label">運費</label>
+          <input type="number" id="eo_shippingFee" value="${order.shippingFee ?? 0}" min="0">
+        </div>
+        <div class="field">
+          <label class="field-label">已收訂金（選填，僅記錄用，不會影響應付總額計算）</label>
+          <input type="number" id="eo_depositReceived" value="${order.depositReceived ?? 0}" min="0">
+        </div>
+
+        <div class="field" style="background:var(--c-cream); border-radius:8px; padding:12px">
+          <div id="editOrderSummary"></div>
+        </div>
+
+        <button class="btn-primary" id="saveEditOrderBtn" style="margin-top:6px">儲存變更</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  renderEditOrderItems();
+  updateEditOrderSummary();
+
+  document.getElementById('closeEditOrderModal').addEventListener('click', closeEditOrderModal);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeEditOrderModal(); });
+  document.getElementById('addOrderItemBtn').addEventListener('click', openAddOrderItemPicker);
+  document.getElementById('eo_manualDiscount').addEventListener('input', updateEditOrderSummary);
+  document.getElementById('eo_shippingFee').addEventListener('input', updateEditOrderSummary);
+  document.getElementById('saveEditOrderBtn').addEventListener('click', saveEditedOrder);
+}
+
+function closeEditOrderModal() {
+  document.getElementById('editOrderModalOverlay')?.remove();
+  editOrderState.order = null;
+  editOrderState.items = [];
+}
+
+function renderEditOrderItems() {
+  const list = document.getElementById('editOrderItemsList');
+  if (editOrderState.items.length === 0) {
+    list.innerHTML = `<div style="font-size:12px; color:var(--c-rose-text); padding:8px 0">目前沒有商品，請按下方「+ 新增商品」加入</div>`;
+    return;
+  }
+  list.innerHTML = editOrderState.items.map((item, i) => `
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:0.5px solid var(--c-blush)">
+      <div style="width:36px; height:36px; border-radius:6px; overflow:hidden; background:var(--c-cream); flex-shrink:0">
+        ${item.image ? `<img src="${escapeHtml(item.image)}" style="width:100%;height:100%;object-fit:cover">` : ''}
+      </div>
+      <div style="flex:1; min-width:0">
+        <div style="font-size:12px; font-weight:700; color:var(--c-coffee)">${escapeHtml(item.name)}${item.style ? `<span style="color:var(--c-rose-text); font-weight:400"> (${escapeHtml(item.style)})</span>` : ''}</div>
+        <div style="font-size:11px; color:var(--c-rose-text)">${formatPrice(item.price)} / 件</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px">
+        <button class="ci-qbtn" data-eo-qty-minus="${i}" type="button">−</button>
+        <span style="font-size:12px; font-weight:700; min-width:18px; text-align:center">${item.qty}</span>
+        <button class="ci-qbtn" data-eo-qty-plus="${i}" type="button">+</button>
+      </div>
+      <div style="font-size:12px; font-weight:700; color:var(--c-orange); width:60px; text-align:right">${formatPrice(item.price * item.qty)}</div>
+      <button class="btn-icon danger" data-eo-remove="${i}" type="button" style="padding:4px 6px">${icon('trash', 14)}</button>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('[data-eo-qty-minus]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.eoQtyMinus);
+      if (editOrderState.items[i].qty > 1) editOrderState.items[i].qty--;
+      renderEditOrderItems();
+      updateEditOrderSummary();
+    });
+  });
+  list.querySelectorAll('[data-eo-qty-plus]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.eoQtyPlus);
+      editOrderState.items[i].qty++;
+      renderEditOrderItems();
+      updateEditOrderSummary();
+    });
+  });
+  list.querySelectorAll('[data-eo-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.eoRemove);
+      editOrderState.items.splice(i, 1);
+      renderEditOrderItems();
+      updateEditOrderSummary();
+    });
+  });
+}
+
+function updateEditOrderSummary() {
+  const summary = document.getElementById('editOrderSummary');
+  if (!summary) return;
+  const order = editOrderState.order;
+
+  const subtotal = editOrderState.items.reduce((sum, i) => sum + i.price * i.qty, 0);
+  const couponDiscount = order.discountAmount || 0;
+  const manualDiscountVal = parseFloat(document.getElementById('eo_manualDiscount')?.value) || 0;
+  const shippingVal = parseFloat(document.getElementById('eo_shippingFee')?.value) || 0;
+  const total = Math.max(0, subtotal - couponDiscount - manualDiscountVal) + shippingVal;
+
+  summary.innerHTML = `
+    <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span>${formatPrice(subtotal)}</span></div>
+    ${couponDiscount > 0 ? `<div style="font-size:12px; color:var(--c-orange); display:flex; justify-content:space-between; margin-bottom:4px"><span>優惠碼折抵（${escapeHtml(order.couponCode || '')}）</span><span>-${formatPrice(couponDiscount)}</span></div>` : ''}
+    ${manualDiscountVal > 0 ? `<div style="font-size:12px; color:var(--c-orange); display:flex; justify-content:space-between; margin-bottom:4px"><span>額外折抵</span><span>-${formatPrice(manualDiscountVal)}</span></div>` : ''}
+    <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>運費</span><span>${formatPrice(shippingVal)}</span></div>
+    <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>應付總額</span><span style="color:var(--c-orange)">${formatPrice(total)}</span></div>
+  `;
+}
+
+// ---- 「+ 新增商品」選擇器：從商品目錄挑一個商品加進訂單 ----
+async function openAddOrderItemPicker() {
+  if (!editOrderState.allProducts) {
+    try {
+      const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
+      editOrderState.allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.error(err);
+      showToast('載入商品清單失敗，請稍後再試');
+      return;
+    }
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'addOrderItemOverlay';
+  overlay.style.zIndex = '250';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:440px">
+      <div class="modal-header">
+        <span class="modal-title">新增商品到訂單</span>
+        <button class="modal-close" id="closeAddOrderItemModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <input type="text" id="addItemSearchInput" placeholder="搜尋商品名稱">
+        </div>
+        <div id="addItemProductList" style="max-height:320px; overflow-y:auto"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  function renderList(keyword) {
+    const kw = (keyword || '').trim().toLowerCase();
+    const filtered = editOrderState.allProducts.filter(p => !kw || (p.name || '').toLowerCase().includes(kw));
+    const listEl = document.getElementById('addItemProductList');
+    if (filtered.length === 0) {
+      listEl.innerHTML = `<div style="font-size:12px; color:var(--c-rose-text); padding:10px 0">找不到符合的商品</div>`;
+      return;
+    }
+    listEl.innerHTML = filtered.map(p => `
+      <div class="add-item-row" data-pick-product="${p.id}" style="display:flex; align-items:center; gap:8px; padding:8px 4px; border-bottom:0.5px solid var(--c-blush); cursor:pointer">
+        <div style="width:36px; height:36px; border-radius:6px; overflow:hidden; background:var(--c-cream); flex-shrink:0">
+          ${p.images && p.images[0] ? `<img src="${escapeHtml(p.images[0])}" style="width:100%;height:100%;object-fit:cover">` : ''}
+        </div>
+        <div style="flex:1; min-width:0; font-size:12px; color:var(--c-coffee)">${escapeHtml(p.name)}</div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('[data-pick-product]').forEach(row => {
+      row.addEventListener('click', () => {
+        const product = editOrderState.allProducts.find(p => p.id === row.dataset.pickProduct);
+        pickProductForOrderItem(product, overlay);
+      });
+    });
+  }
+  renderList('');
+
+  document.getElementById('addItemSearchInput').addEventListener('input', (e) => renderList(e.target.value));
+  document.getElementById('closeAddOrderItemModal').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+// 選定商品後，如果有款式要再選款式，沒有款式就直接加進訂單
+function pickProductForOrderItem(product, pickerOverlay) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length === 0) {
+    addItemToEditOrder(product, '');
+    pickerOverlay.remove();
+    return;
+  }
+
+  pickerOverlay.innerHTML = `
+    <div class="modal-box" style="max-width:360px">
+      <div class="modal-header">
+        <span class="modal-title">選擇款式</span>
+        <button class="modal-close" id="closeStylePickModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="tag-chip-list">
+          ${styles.map(s => `<div class="tag-chip" data-pick-style="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+  pickerOverlay.querySelectorAll('[data-pick-style]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      addItemToEditOrder(product, chip.dataset.pickStyle);
+      pickerOverlay.remove();
+    });
+  });
+  document.getElementById('closeStylePickModal').addEventListener('click', () => pickerOverlay.remove());
+}
+
+function addItemToEditOrder(product, style) {
+  const existing = editOrderState.items.find(i => i.productId === product.id && (i.style || '') === (style || ''));
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    editOrderState.items.push({
+      productId: product.id,
+      name: product.name,
+      style: style || '',
+      qty: 1,
+      price: getStylePrice(product, style),
+      image: (product.images && product.images[0]) || '',
+      stockType: product.stockType || 'instock'
+    });
+  }
+  renderEditOrderItems();
+  updateEditOrderSummary();
+}
+
+async function saveEditedOrder() {
+  const order = editOrderState.order;
+  if (editOrderState.items.length === 0) {
+    showToast('訂單至少要有一項商品，如果整筆都不要了請直接刪除訂單');
+    return;
+  }
+
+  const manualDiscount = parseFloat(document.getElementById('eo_manualDiscount').value) || 0;
+  const shippingFee = parseFloat(document.getElementById('eo_shippingFee').value) || 0;
+  const depositReceived = parseFloat(document.getElementById('eo_depositReceived').value) || 0;
+
+  if (manualDiscount < 0 || shippingFee < 0 || depositReceived < 0) {
+    showToast('金額不能是負數');
+    return;
+  }
+
+  const btn = document.getElementById('saveEditOrderBtn');
+  btn.disabled = true;
+  btn.textContent = '調整庫存中...';
+
+  try {
+    // 先依商品內容差異調整庫存（交易內會檢查夠不夠扣，不夠會 throw 並整批 rollback，不會扣一半）
+    await adjustStockForOrderEdit(order.items || [], editOrderState.items);
+
+    const subtotal = editOrderState.items.reduce((sum, i) => sum + i.price * i.qty, 0);
+    const couponDiscount = order.discountAmount || 0;
+    const total = Math.max(0, subtotal - couponDiscount - manualDiscount) + shippingFee;
+
+    btn.textContent = '儲存中...';
+    await db.collection(COL.ORDERS).doc(order.id).update({
+      items: editOrderState.items,
+      subtotal,
+      manualDiscount,
+      shippingFee,
+      depositReceived,
+      total,
+      lastEditedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    showToast('訂單已更新');
+    closeEditOrderModal();
+    loadAndRenderOrders();
+  } catch (err) {
+    console.error('編輯訂單失敗:', err);
+    if (err.name === 'StockInsufficientError') {
+      showToast(`庫存不足，無法儲存：${err.problems[0]}`);
+    } else {
+      showToast('儲存失敗，請稍後再試');
+    }
+    btn.disabled = false;
+    btn.textContent = '儲存變更';
+  }
 }
 
 // ============================================
