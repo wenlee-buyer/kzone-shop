@@ -102,19 +102,20 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
     const targetIdx = idx + direction;
     if (targetIdx < 0 || targetIdx >= items.length) return;
 
-    const itemA = items[idx];
-    const itemB = items[targetIdx];
-    const orderA = itemA.order;
-    const orderB = itemB.order;
+    // 直接交換陣列裡的位置，畫面順序不要依賴 order 數值排序決定。
+    // 原本的做法是交換兩邊的 order 數值再排序，但如果舊資料裡剛好有兩筆 order 數值相同（或缺漏），
+    // 交換後數值還是相等，排序結果不會變，畫面就會看起來「怎麼點都沒反應」，尤其容易發生在第一筆。
+    [items[idx], items[targetIdx]] = [items[targetIdx], items[idx]];
 
-    await Promise.all([
-      db.collection(collectionName).doc(itemA.id).update({ order: orderB }),
-      db.collection(collectionName).doc(itemB.id).update({ order: orderA })
-    ]);
+    // 交換完之後，依照畫面上「目前真正看到的順序」整批重新編號成連續的 1,2,3...，
+    // 這樣即使舊資料的 order 數值本來就亂了，點過一次之後也會自動修正乾淨，不會再卡住
+    const batch = db.batch();
+    items.forEach((item, i) => {
+      item.order = i + 1;
+      batch.update(db.collection(collectionName).doc(item.id), { order: i + 1 });
+    });
+    await batch.commit();
 
-    itemA.order = orderB;
-    itemB.order = orderA;
-    items.sort((a, b) => a.order - b.order);
     await reloadCoreData();
     renderList();
   }
