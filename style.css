@@ -91,21 +91,19 @@ img { max-width: 100%; display: block; }
   display: flex; align-items: center; justify-content: center; font-weight: 700;
 }
 
-/* ---------- 來源分類導覽（平均分布） ---------- */
+/* ---------- 來源分類導覽（分類一多就自動換行，不要橫向捲動） ---------- */
 .src-nav {
   background: #fff;
   border-bottom: 0.5px solid var(--c-blush);
   display: flex;
 }
 .src-nav .container {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  overflow-x: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
 }
-.src-nav::-webkit-scrollbar { display: none; }
 .sn-item {
-  padding: 13px 8px 11px;
+  padding: 11px 10px;
   font-size: 13px;
   color: var(--c-rose-text);
   text-align: center;
@@ -118,6 +116,11 @@ img { max-width: 100%; display: block; }
   border-bottom: 2px solid transparent;
 }
 .sn-item.active { color: var(--c-coffee); border-bottom-color: var(--c-orange); }
+/* 滑鼠指到時也給一點底線提示（觸控裝置沒有hover，不受影響） */
+@media (hover: hover) {
+  .sn-item:hover { color: var(--c-coffee); border-bottom-color: var(--c-blush); }
+  .sn-item.active:hover { border-bottom-color: var(--c-orange); }
+}
 
 /* ---------- Hero ---------- */
 .hero {
