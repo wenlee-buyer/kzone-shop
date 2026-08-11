@@ -566,7 +566,7 @@ function addItemToEditOrder(product, style) {
       qty: 1,
       price: getStylePrice(product, style),
       image: (product.images && product.images[0]) || '',
-      stockType: product.stockType || 'instock'
+      stockType: getStyleStockType(product, style)
     });
   }
   renderEditOrderItems();

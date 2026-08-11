@@ -135,9 +135,15 @@ function renderProductRow(p) {
   // 同時相容新格式(categoryIds陣列)和舊格式(categoryId字串)
   const catIds = p.categoryIds && Array.isArray(p.categoryIds) ? p.categoryIds : (p.categoryId ? [p.categoryId] : []);
   const catNames = catIds.map(id => appState.categories.find(c => c.id === id)?.name).filter(Boolean);
-  const stockPill = p.stockType === 'preorder'
-    ? `<span class="pill pill-preorder">預購</span>`
-    : `<span class="pill pill-instock">現貨</span>`;
+  const stockPill = styles.length > 0
+    ? (isMixedStockProduct(p)
+        ? `<span class="pill pill-instock">現貨</span><span class="pill pill-preorder" style="margin-left:2px">預購</span>`
+        : (getStyleStockType(p, styles[0].name) === 'preorder'
+            ? `<span class="pill pill-preorder">預購</span>`
+            : `<span class="pill pill-instock">現貨</span>`))
+    : (p.stockType === 'preorder'
+        ? `<span class="pill pill-preorder">預購</span>`
+        : `<span class="pill pill-instock">現貨</span>`);
   const archivedPill = p.archived ? `<span class="pill pill-archived" style="margin-left:4px">已封存</span>` : '';
   const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33;margin-left:4px">已售完</span>` : '';
   const img = (p.images && p.images[0]) || '';
@@ -148,7 +154,9 @@ function renderProductRow(p) {
       const soldOut = s.stock !== null && s.stock !== undefined && s.stock <= 0;
       const stockText = s.stock === null || s.stock === undefined ? '不限' : s.stock;
       const priceText = s.price !== null && s.price !== undefined ? `・${formatPrice(s.price)}` : '';
-      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}${priceText}`;
+      const styleType = getStyleStockType(p, s.name);
+      const typeText = styleType === 'preorder' ? '・預購' : '・現貨';
+      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}${priceText}${typeText}`;
     }).join('<br>');
   } else if (p.stock !== null && p.stock !== undefined) {
     stockInfo = `庫存：${p.stock}`;
@@ -337,7 +345,7 @@ function openProductEditor(product, opts = {}) {
         </div>
 
         <div class="field">
-          <label class="field-label">現貨／預購 *</label>
+          <label class="field-label">現貨／預購 *（沒有另外針對款式設定的話，就是用這個）</label>
           <div class="tag-chip-list">
             <div class="tag-chip ${(!product || product.stockType === 'instock') ? 'selected' : ''}" data-stock="instock">現貨</div>
             <div class="tag-chip ${product?.stockType === 'preorder' ? 'selected' : ''}" data-stock="preorder">預購</div>
@@ -362,7 +370,7 @@ function openProductEditor(product, opts = {}) {
         </div>
 
         <div class="field">
-          <label class="field-label">款式（可新增多個，庫存會改成各款式分開計算。價格欄位留空表示跟上面的「價格」一樣，填了數字才會覆蓋成該款式專屬的價格）</label>
+          <label class="field-label">款式（可新增多個，庫存會改成各款式分開計算。價格欄位留空表示跟上面的「價格」一樣，填了數字才會覆蓋成該款式專屬的價格。現貨/預購同理，選「跟隨商品」就是用上面的設定，同一個商品可以有些款式現貨、有些款式預購）</label>
           <div id="pf_stylesList"></div>
           <button class="btn-secondary" id="pf_addStyleBtn" style="margin-top:4px">+ 新增款式</button>
         </div>
@@ -381,8 +389,8 @@ function openProductEditor(product, opts = {}) {
   // 款式列表渲染（每個款式可各自設定庫存跟價格；相容舊資料：舊版 styles 是純字串陣列，或沒有 price 欄位）
   const stylesListEl = document.getElementById('pf_stylesList');
   let styles = (product?.styles || []).map(s => {
-    if (typeof s === 'string') return { name: s, stock: '', price: '' };
-    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '' };
+    if (typeof s === 'string') return { name: s, stock: '', price: '', stockType: '' };
+    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '', stockType: s.stockType || '' };
   });
 
   function toggleSimpleStockVisibility() {
@@ -391,11 +399,16 @@ function openProductEditor(product, opts = {}) {
 
   function renderStylesList() {
     stylesListEl.innerHTML = styles.map((s, i) => `
-      <div class="style-input-row">
+      <div class="style-input-row" style="flex-wrap:wrap">
         <input type="text" value="${escapeHtml(s.name)}" placeholder="款式名稱" data-style-name-idx="${i}" style="flex:2">
         <input type="number" value="${escapeHtml(String(s.stock))}" placeholder="庫存(留空不限)" data-style-stock-idx="${i}" style="flex:1; min-width:0">
         <input type="number" value="${escapeHtml(String(s.price))}" placeholder="價格(留空同上)" data-style-price-idx="${i}" style="flex:1; min-width:0">
         <button class="btn-icon danger" data-remove-style="${i}">移除</button>
+        <div class="tag-chip-list" style="flex-basis:100%; margin-top:2px">
+          <div class="tag-chip ${!s.stockType ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="">跟隨商品</div>
+          <div class="tag-chip ${s.stockType === 'instock' ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="instock">現貨</div>
+          <div class="tag-chip ${s.stockType === 'preorder' ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="preorder">預購</div>
+        </div>
       </div>
     `).join('');
     stylesListEl.querySelectorAll('[data-style-name-idx]').forEach(input => {
@@ -420,12 +433,19 @@ function openProductEditor(product, opts = {}) {
         toggleSimpleStockVisibility();
       });
     });
+    stylesListEl.querySelectorAll('[data-style-stocktype-idx]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const idx = parseInt(chip.dataset.styleStocktypeIdx);
+        styles[idx].stockType = chip.dataset.styleStocktypeVal;
+        renderStylesList();
+      });
+    });
   }
   renderStylesList();
   toggleSimpleStockVisibility();
 
   document.getElementById('pf_addStyleBtn').addEventListener('click', () => {
-    styles.push({ name: '', stock: '', price: '' });
+    styles.push({ name: '', stock: '', price: '', stockType: '' });
     renderStylesList();
     toggleSimpleStockVisibility();
   });
@@ -703,7 +723,9 @@ async function saveProduct(styles) {
       name: s.name.trim(),
       stock: s.stock === '' || s.stock === null || s.stock === undefined ? null : parseInt(s.stock),
       // price 留空就是 null，代表這個款式跟商品共用同一個價格
-      price: s.price === '' || s.price === null || s.price === undefined ? null : parseFloat(s.price)
+      price: s.price === '' || s.price === null || s.price === undefined ? null : parseFloat(s.price),
+      // stockType 留空就是跟隨商品共用的現貨/預購設定
+      stockType: s.stockType || null
     }));
 
   if (!name) { showToast('請輸入商品名稱'); return; }

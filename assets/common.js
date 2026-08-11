@@ -138,8 +138,10 @@ function setupPasteListener(targetElement, onImagePasted) {
 
 // ---- 商品卡片 HTML 產生器 ----
 function renderProductCard(product, watermarkText) {
-  const badgeClass = product.stockType === 'preorder' ? 'pbadge pre' : 'pbadge';
-  const badgeText = product.stockType === 'preorder' ? '預購' : '現貨';
+  // 混合款式（有些現貨有些預購）的商品，卡片上統一顯示「現貨」徽章，實際狀態進商品頁看各款式
+  const cardIsPreorder = !isMixedStockProduct(product) && productHasStockType(product, 'preorder') && !productHasStockType(product, 'instock');
+  const badgeClass = cardIsPreorder ? 'pbadge pre' : 'pbadge';
+  const badgeText = cardIsPreorder ? '預購' : '現貨';
   const imgUrl = (product.images && product.images[0]) || '';
   const imgHtml = imgUrl
     ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(product.name)}" loading="lazy">`
@@ -292,14 +294,42 @@ function sortBySortOrderSoldOutLast(products, categoryId) {
   });
 }
 
-// ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock, price}物件陣列）----
+// ---- 款式資料正規化（相容舊格式：純字串陣列 → 新格式：{name, stock, price, stockType}物件陣列）----
 // price 是選填的「這個款式專屬的價格」，沒設定（null/undefined）就是跟商品共用同一個 price
+// stockType 是選填的「這個款式專屬的現貨/預購」，沒設定（''/null/undefined）就是跟商品共用同一個 stockType
 function normalizeStyles(styles) {
   if (!styles || !Array.isArray(styles)) return [];
   return styles.map(s => {
-    if (typeof s === 'string') return { name: s, stock: null, price: null };
-    return { name: s.name || '', stock: s.stock ?? null, price: s.price ?? null };
+    if (typeof s === 'string') return { name: s, stock: null, price: null, stockType: null };
+    return { name: s.name || '', stock: s.stock ?? null, price: s.price ?? null, stockType: s.stockType || null };
   }).filter(s => s.name);
+}
+
+// 取得指定款式實際的現貨/預購狀態：款式自己有設定就用款式的，沒有就退回商品共用的 stockType（預設現貨）
+function getStyleStockType(product, styleName) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0 && styleName) {
+    const style = styles.find(s => s.name === styleName);
+    if (style && style.stockType) return style.stockType;
+  }
+  return product.stockType === 'preorder' ? 'preorder' : 'instock';
+}
+
+// 商品是否「混合款式」：同一個商品裡有些款式現貨、有些預購
+function isMixedStockProduct(product) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length === 0) return false;
+  const types = new Set(styles.map(s => getStyleStockType(product, s.name)));
+  return types.size > 1;
+}
+
+// 商品是否「含有」某個現貨/預購狀態（用於列表篩選：只要有任何一個款式符合就算符合）
+function productHasStockType(product, wantedType) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length === 0) {
+    return (product.stockType === 'preorder' ? 'preorder' : 'instock') === wantedType;
+  }
+  return styles.some(s => getStyleStockType(product, s.name) === wantedType);
 }
 
 // 取得指定款式（或無款式商品本身）實際要收的價格：
