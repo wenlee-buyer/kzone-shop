@@ -76,6 +76,10 @@
   </div>
 </div>
 
+<div class="src-nav">
+  <div class="container" id="srcNavList"></div>
+</div>
+
 <div id="content">
   <div class="loading-wrap"><div class="spin"></div>載入商品資料中...</div>
 </div>
@@ -102,6 +106,26 @@ let selectedStyle = null;
 let qty = 1;
 let currentImgIndex = 0;
 
+// 分類列：讓客人不管在哪個商品詳情頁都能看到目前這件商品屬於哪個分類，也可以點去看同分類其他商品
+function renderCategoryNav() {
+  const list = document.getElementById('srcNavList');
+  if (!list) return;
+  const productCatIds = getProductCategoryIds(product);
+  let html = `<button class="sn-item" data-cat="all">全部</button>`;
+  html += `<button class="sn-item" data-cat="new">✨ 最新上架</button>`;
+  categories.forEach(cat => {
+    html += `<button class="sn-item ${productCatIds.includes(cat.id) ? 'active' : ''}" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.sn-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const catId = btn.dataset.cat;
+      // 「全部」直接去商品列表頁看全部商品，其他分類帶著 cat 參數過去，讓 products.html 一進去就先篩好
+      window.location.href = catId === 'all' ? 'products.html' : `products.html?cat=${encodeURIComponent(catId)}`;
+    });
+  });
+}
+
 function getProductId() {
   const params = new URLSearchParams(location.search);
   return params.get('id');
@@ -123,7 +147,7 @@ async function init() {
   ]);
 
   settings = settingsData;
-  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
   tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   if (!prodDoc.exists) {
@@ -132,6 +156,7 @@ async function init() {
   }
 
   product = { id: prodDoc.id, ...prodDoc.data() };
+  renderCategoryNav();
   render();
 
   // 非同步記錄商品點擊（不影響頁面載入速度，失敗也不影響使用者體驗）
