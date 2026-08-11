@@ -157,7 +157,6 @@ function render() {
   const productCats = catIds.map(id => categories.find(c => c.id === id)).filter(Boolean);
   const productTags = (product.tagIds || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean);
   const images = product.images && product.images.length > 0 ? product.images : [];
-  const stockBadgeText = product.stockType === 'preorder' ? '預購' : '現貨';
   const hasStyles = product.styles && product.styles.length > 0;
   const productSoldOut = isProductSoldOut(product);
 
@@ -209,6 +208,9 @@ function render() {
     `;
   }
 
+  // 混合款式的商品，徽章要看目前選定的款式各自現貨/預購狀態，切換款式時會再更新
+  const stockBadgeText = getStyleStockType(product, selectedStyle) === 'preorder' ? '預購' : '現貨';
+
   const buyAreaHtml = productSoldOut ? `
       <div class="stock-note" style="background:#f1efe8; border-color:var(--c-rose); text-align:center; font-size:13px; font-weight:700; color:var(--c-rose-text); padding:16px">
         此商品目前已售完
@@ -231,7 +233,7 @@ function render() {
     <div class="detail-info">
       <div class="dtitle">${escapeHtml(product.name)}</div>
       <div class="dbadges">
-        <span class="dbadge">${stockBadgeText}</span>
+        <span class="dbadge" id="dStockBadge">${stockBadgeText}</span>
         ${productCats.map(c => `<span class="dbadge">${escapeHtml(c.name)}</span>`).join('')}
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
@@ -280,6 +282,8 @@ function render() {
         document.getElementById('qtyNum').textContent = qty;
         // 不同款式可能價格不同，切換款式時要同步更新畫面上顯示的價格
         document.getElementById('dPrice').textContent = formatPrice(getStylePrice(product, selectedStyle));
+        // 不同款式可能現貨/預購狀態不同，切換款式時也要同步更新徽章
+        document.getElementById('dStockBadge').textContent = getStyleStockType(product, selectedStyle) === 'preorder' ? '預購' : '現貨';
       });
     });
   }
@@ -396,8 +400,8 @@ async function handleAddToCart() {
     return;
   }
 
-  // 提醒只在「第一次加入預購商品」時跳出，現貨商品不會觸發
-  const isPreorderItem = product.stockType === 'preorder';
+  // 提醒只在「第一次加入預購商品」時跳出，現貨商品不會觸發（要看選定款式實際的現貨/預購狀態，不是商品整體的）
+  const isPreorderItem = getStyleStockType(product, selectedStyle) === 'preorder';
   const shouldShowReminder = isPreorderItem && !hasSeenFirstCartReminder();
 
   if (shouldShowReminder) {
@@ -418,7 +422,7 @@ function doAddToCart() {
     style: selectedStyle || '',
     qty: qty,
     image: (product.images && product.images[0]) || '',
-    stockType: product.stockType || 'instock'
+    stockType: getStyleStockType(product, selectedStyle)
   });
   refreshCartBadge();
   showToast(`已加入購物車：${product.name} x${qty}`);

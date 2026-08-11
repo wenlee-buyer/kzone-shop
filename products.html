@@ -58,7 +58,7 @@
 </div>
 
 <div style="padding:20px 16px 50px; text-align:center" id="loadMoreWrap">
-  <button class="more-btn" id="loadMoreBtn" style="display:none; margin:0 auto">載入更多 <span class="ico" data-icon="chevron-down" data-size="18"></span></button>
+  <button class="more-btn" id="loadMoreBtn" style="display:none; margin:0 auto">顯示全部商品 <span class="ico" data-icon="chevron-down" data-size="18"></span></button>
 </div>
 
 <div class="trademark-notice" style="padding:0 16px 90px">
@@ -104,7 +104,8 @@ async function init() {
   await loadProducts();
 
   document.getElementById('loadMoreBtn').addEventListener('click', () => {
-    displayCount += 24;
+    // 點一次就直接顯示該分類/篩選條件下的「全部」商品，不用重複點好幾次
+    displayCount = Infinity;
     filterAndRender();
   });
 }
@@ -185,7 +186,7 @@ async function loadProducts() {
 function filterAndRender() {
   let filtered = currentStockFilter === 'all'
     ? allProducts.slice()
-    : allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+    : allProducts.filter(p => productHasStockType(p, currentStockFilter));
 
   if (currentCatFilter === 'new') {
     filtered = filterAndSortNewProducts(filtered);

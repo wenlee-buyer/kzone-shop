@@ -258,7 +258,7 @@ async function loadProducts() {
 function filterAndRender() {
   let filtered = currentStockFilter === 'all'
     ? allProducts.slice()
-    : allProducts.filter(p => p.stockType === currentStockFilter || (!p.stockType && currentStockFilter === 'instock'));
+    : allProducts.filter(p => productHasStockType(p, currentStockFilter));
 
   if (currentCatFilter === 'new') {
     filtered = filterAndSortNewProducts(filtered);
