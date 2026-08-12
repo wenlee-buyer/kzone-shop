@@ -39,6 +39,13 @@
   </div>
 </div>
 
+<div style="padding:12px 16px 0; display:none" id="searchQueryWrap">
+  <div class="container" style="display:flex; gap:8px; align-items:center">
+    <input type="text" id="searchQueryInput" placeholder="輸入商品或款式名稱" style="flex:1; border:0.5px solid var(--c-rose); border-radius:8px; padding:9px 12px; font-size:13px; box-sizing:border-box">
+    <button class="btn-secondary" id="searchQueryClearBtn" style="width:auto; padding:9px 14px">清除</button>
+  </div>
+</div>
+
 <div class="stock-tabs" style="padding-top:14px">
   <div class="container">
     <button class="stab active" data-stock="all"><span class="stab-inner">全部商品</span></button>
@@ -85,6 +92,7 @@ let currentCatFilter = 'all';
 let currentStockFilter = 'all';
 let activeTagFilters = new Set();
 let displayCount = 24;
+let searchQuery = '';
 
 async function init() {
   await ensureDefaultData();
@@ -100,8 +108,31 @@ async function init() {
   tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   // 支援從商品詳情頁的分類列點過來（例如 products.html?cat=xxx），一進頁面就先選好該分類
-  const catFromUrl = new URLSearchParams(location.search).get('cat');
+  const urlParams = new URLSearchParams(location.search);
+  const catFromUrl = urlParams.get('cat');
   if (catFromUrl) currentCatFilter = catFromUrl;
+
+  // 支援從首頁搜尋框跳過來（products.html?q=xxx），一進頁面就先套用搜尋關鍵字
+  const qFromUrl = urlParams.get('q');
+  if (qFromUrl) {
+    searchQuery = qFromUrl;
+    document.getElementById('searchQueryWrap').style.display = 'block';
+    document.getElementById('searchQueryInput').value = qFromUrl;
+    document.getElementById('resultCount').textContent = `搜尋「${qFromUrl}」的結果`;
+  }
+  document.getElementById('searchQueryInput').addEventListener('input', (e) => {
+    searchQuery = e.target.value.trim();
+    displayCount = 24;
+    filterAndRender();
+  });
+  document.getElementById('searchQueryClearBtn').addEventListener('click', () => {
+    searchQuery = '';
+    document.getElementById('searchQueryInput').value = '';
+    document.getElementById('searchQueryWrap').style.display = 'none';
+    document.getElementById('resultCount').textContent = '商品列表';
+    displayCount = 24;
+    filterAndRender();
+  });
 
   renderCategoryNav();
   renderTagFilters();
@@ -201,9 +232,12 @@ function filterAndRender() {
     filtered = sortBySortOrderSoldOutLast(filtered, currentCatFilter !== 'all' ? currentCatFilter : null);
   }
   if (activeTagFilters.size > 0) filtered = filtered.filter(p => p.tagIds && p.tagIds.some(t => activeTagFilters.has(t)));
+  if (searchQuery) filtered = filtered.filter(p => productMatchesSearch(p, searchQuery));
 
   const grid = document.getElementById('productGrid');
-  document.getElementById('resultCount').textContent = `共 ${filtered.length} 項商品`;
+  document.getElementById('resultCount').textContent = searchQuery
+    ? `搜尋「${searchQuery}」共 ${filtered.length} 項商品`
+    : `共 ${filtered.length} 項商品`;
 
   const display = filtered.slice(0, displayCount);
 

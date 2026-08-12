@@ -30,7 +30,7 @@
       <div class="logo-sub" id="siteSubtitle">你的專屬楓谷周邊補給所</div>
     </div>
     <div class="nav-right">
-      <button class="nav-icon-btn" onclick="document.getElementById('searchBar').scrollIntoView({behavior:'smooth'})" aria-label="搜尋">
+      <button class="nav-icon-btn" onclick="openSearchModal()" aria-label="搜尋">
         <span class="ico" data-icon="search" data-size="18"></span>
       </button>
       <a href="order-lookup.html" class="nav-icon-btn" aria-label="查詢訂單">
@@ -62,7 +62,6 @@
   </div>
 </div>
 
-<div id="searchBar"></div>
 
 <div class="sec-label"><div class="container"><span>現貨 / 預購</span><div class="line"></div></div></div>
 <div class="stock-tabs">
@@ -295,6 +294,40 @@ function filterAndRender() {
 }
 
 init();
+
+// ---- 搜尋彈出框：輸入商品/款式關鍵字後，跳到「所有商品」頁顯示比對結果 ----
+function openSearchModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'searchModalOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">搜尋商品</span>
+        <button class="modal-close" id="closeSearchModal">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="searchModalInput" placeholder="輸入商品或款式名稱" style="width:100%; border:0.5px solid var(--c-rose); border-radius:8px; padding:11px 13px; font-size:14px; box-sizing:border-box">
+        <button class="btn-primary" id="searchModalSubmit" style="margin-top:14px">搜尋</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const input = document.getElementById('searchModalInput');
+  input.focus();
+
+  function doSearch() {
+    const q = input.value.trim();
+    if (!q) { showToast('請輸入搜尋關鍵字'); return; }
+    window.location.href = `products.html?q=${encodeURIComponent(q)}`;
+  }
+
+  document.getElementById('searchModalSubmit').addEventListener('click', doSearch);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  document.getElementById('closeSearchModal').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+}
 </script>
 
 </body>
