@@ -251,6 +251,35 @@ function showToast(msg, duration = 2200) {
   setTimeout(() => toast.remove(), duration);
 }
 
+// ---- 搜尋功能共用邏輯（首頁彈出搜尋框 → 導到 products.html?q=xxx 顯示結果）----
+// 別名字典：客人習慣用的暱稱不一定等於商品名稱裡打的官方角色名，搜其中一個要能連帶搜到另一個
+// 例如「粉豆」是玩家對「皮卡啾」的暱稱，之後有其他角色暱稱也可以直接加在這裡（雙向都會生效，不用重複寫兩次）
+const SEARCH_SYNONYMS = [
+  ['粉豆', '皮卡啾']
+];
+
+// 把搜尋關鍵字展開成「所有要一起比對的詞」：原本輸入的詞 + 別名字典裡有對應到的詞
+function expandSearchTerms(query) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) return [];
+  const terms = new Set([q]);
+  SEARCH_SYNONYMS.forEach(group => {
+    if (group.some(word => word.toLowerCase() === q)) {
+      group.forEach(word => terms.add(word.toLowerCase()));
+    }
+  });
+  return Array.from(terms);
+}
+
+// 判斷商品是否符合搜尋關鍵字：模糊比對商品名稱 + 所有款式名稱，任何一個詞有比對到就算符合
+function productMatchesSearch(product, query) {
+  const terms = expandSearchTerms(query);
+  if (terms.length === 0) return true; // 沒輸入關鍵字時不篩選
+  const name = (product.name || '').toLowerCase();
+  const styleNames = normalizeStyles(product.styles).map(s => (s.name || '').toLowerCase());
+  return terms.some(term => name.includes(term) || styleNames.some(sn => sn.includes(term)));
+}
+
 // ---- 「最新上架」與排序共用邏輯（index.html / products.html 共用，避免重複實作）----
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
