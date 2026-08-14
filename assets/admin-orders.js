@@ -176,6 +176,15 @@ function renderOrderCard(order) {
     ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已出貨</span>`
     : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待處理</span>`;
 
+  // 訂金主要是預購訂單在用（尾款要等出貨前才收），不是超商取貨/貨到付款訂單，所以只在非cvs訂單顯示
+  const depositReceivedNum = order.depositReceived || 0;
+  const balanceAmount = Math.max(0, (order.total || 0) - depositReceivedNum);
+  const depositPill = !isCvs
+    ? (depositReceivedNum > 0
+        ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已付訂金 ${formatPrice(depositReceivedNum)}</span>`
+        : `<span class="pill" style="background:#f1efe8; color:#8a8378; margin-left:4px">未付訂金</span>`)
+    : '';
+
   const shippedInfo = isShipped ? `
     <div style="background:#f0fff4; border:0.5px solid #b2dfdb; border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:#1a5c2a; line-height:1.8">
       ${icon('check', 14)} 已出貨・出貨日期：${escapeHtml(order.shippedAt || '')}
@@ -217,10 +226,10 @@ function renderOrderCard(order) {
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${isShipped ? '#edfaf6' : 'var(--c-cream)'}" id="toggle-order-${order.id}">
         <div style="flex:1; min-width:0">
           <div style="font-size:13px; font-weight:700; color:var(--c-coffee); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
-            ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${paymentPill} ${shippedPill}
+            ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${paymentPill} ${depositPill} ${shippedPill}
           </div>
           <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
-            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}${order.orderNo ? ` ・ 編號：${escapeHtml(order.orderNo)}` : ''}
+            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ 總額${formatPrice(order.total)}${!isCvs && depositReceivedNum > 0 ? ` ・ 尾款${formatPrice(balanceAmount)}` : ''}${order.orderNo ? ` ・ 編號：${escapeHtml(order.orderNo)}` : ''}
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
