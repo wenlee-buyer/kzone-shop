@@ -176,6 +176,19 @@ async function init() {
           ・ 如有任何問題，請將訂單編號截圖發送給 LINE 官方小編<br>
           ・ 請保存本頁訂單編號，方便對照確認
         `;
+      } else if (lastOrder.orderType === 'homeDelivery') {
+        document.getElementById('completeSub').innerHTML = `
+          感謝您的訂購 🍄<br>
+          <strong>此訂單商品需要宅配，請點選下方按鈕私訊官方小編取得匯款帳號</strong><br>
+          完成轉帳後<br>
+          我們會盡快為您安排出貨
+        `;
+        document.getElementById('orderNoticeText').innerHTML = `
+          ・ 此訂單商品需宅配，恕無法超商取貨付款<br>
+          ・ 請私訊 LINE 官方小編取得匯款帳號並完成轉帳<br>
+          ・ 轉帳確認後我們才會安排出貨，請耐心等候小編回覆<br>
+          ・ 請保存本頁訂單編號，方便對照確認
+        `;
       } else if (lastOrder.orderType === 'preorder') {
         document.getElementById('completeSub').innerHTML = `
           感謝您的訂購 🍄<br>

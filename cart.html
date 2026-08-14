@@ -157,8 +157,22 @@ function render() {
 
   const hasPreorder = cart.some(item => item.stockType === 'preorder');
   const hasInstock = cart.some(item => item.stockType !== 'preorder');
+  // 只要購物車裡有任何一件商品需要宅配，整張訂單就改用宅配+匯款流程（不能拆成兩種付款方式）
+  const hasHomeDelivery = cart.some(item => item.deliveryMethod === 'homeDelivery');
 
-  if (hasPreorder) {
+  if (hasHomeDelivery) {
+    html += `
+      <div class="checkout-note">
+        <strong>【訂單中含有需宅配商品】</strong><br>
+        請填寫收件地址，${hasPreorder ? '我們會自動產生訂單圖片並下載，接著為您開啟 LINE 官方帳號，請將下載好的訂單圖片傳送給小編' : '送出後為您開啟 LINE 官方帳號'}<br>
+        <strong>請私訊官方小編取得匯款帳號，完成轉帳後我們才會安排出貨</strong>
+      </div>
+
+      <button class="btn-line" id="openCvsFormBtn">
+        <span style="font-weight:700">LINE</span> 填寫收件資訊並前往官方帳號
+      </button>
+    `;
+  } else if (hasPreorder) {
     html += `
       <div class="checkout-note">
         <strong>【訂單中含有預購商品】</strong><br>
@@ -287,8 +301,10 @@ async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingIn
     <div class="oi-total"><span>商品合計（預購最終金額以小編確認為準）</span><span>${formatPrice(total - discount)}</span></div>
     <div class="oi-customer">
       ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
-      取件人：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
-      取貨門市：${escapeHtml(shippingInfo?.storeName || '')}${shippingInfo?.store ? `（${escapeHtml(shippingInfo.store)}）` : ''}
+      ${shippingInfo?.hasHomeDelivery ? '收件人' : '取件人'}：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
+      ${shippingInfo?.hasHomeDelivery
+        ? `收件地址：${escapeHtml(shippingInfo?.address || '')}`
+        : `取貨門市：${escapeHtml(shippingInfo?.storeName || '')}${shippingInfo?.store ? `（${escapeHtml(shippingInfo.store)}）` : ''}`}
     </div>
     <div class="oi-footer">訂單產生時間：${dateStr}　${escapeHtml(settings.watermarkText)}</div>
   `;
@@ -333,6 +349,7 @@ function openCvsForm() {
   if (cart.length === 0) return;
 
   const hasPreorder = cart.some(item => item.stockType === 'preorder');
+  const hasHomeDelivery = cart.some(item => item.deliveryMethod === 'homeDelivery');
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -340,18 +357,24 @@ function openCvsForm() {
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:480px">
       <div class="modal-header">
-        <span class="modal-title">取貨資訊</span>
+        <span class="modal-title">${hasHomeDelivery ? '收件資訊' : '取貨資訊'}</span>
         <button class="modal-close" id="closeCvsForm">×</button>
       </div>
       <div class="modal-body">
         <div class="field">
-          <label class="field-label">取件人姓名 <span style="color:var(--c-orange)">*</span></label>
+          <label class="field-label">${hasHomeDelivery ? '收件人姓名' : '取件人姓名'} <span style="color:var(--c-orange)">*</span></label>
           <input type="text" id="cvs_name" placeholder="姓名（10字以內，請勿含特殊符號）">
         </div>
         <div class="field">
-          <label class="field-label">取件人手機 <span style="color:var(--c-orange)">*</span></label>
+          <label class="field-label">${hasHomeDelivery ? '收件人手機' : '取件人手機'} <span style="color:var(--c-orange)">*</span></label>
           <input type="text" id="cvs_phone" placeholder="例：0912345678（10碼數字）">
         </div>
+        ${hasHomeDelivery ? `
+        <div class="field">
+          <label class="field-label">收件地址 <span style="color:var(--c-orange)">*</span></label>
+          <input type="text" id="cvs_address" placeholder="例：台北市中山區○○路100號5樓">
+        </div>
+        ` : `
         <div class="field">
           <label class="field-label">取件門市名稱 <span style="color:var(--c-orange)">*</span></label>
           <input type="text" id="cvs_storeName" placeholder="例：7-ELEVEN 楓谷門市">
@@ -360,13 +383,14 @@ function openCvsForm() {
           <label class="field-label">門市店號（6碼數字，選填）</label>
           <input type="text" id="cvs_store" placeholder="例：123456（若不知道可由小編協助查詢）">
         </div>
+        `}
         <div class="field" style="background:var(--c-cream); border-radius:8px; padding:10px 12px">
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>商品小計</span><span id="cvs_subtotal"></span></div>
           <div id="cvs_discountRow" style="font-size:12px; color:var(--c-orange); display:none; justify-content:space-between; margin-bottom:4px"><span id="cvs_discountLabel"></span><span id="cvs_discount"></span></div>
           <div style="font-size:12px; color:var(--c-coffee); display:flex; justify-content:space-between; margin-bottom:4px"><span>運費</span><span id="cvs_shipping"></span></div>
-          <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>${hasPreorder ? '預估總額（實際依小編確認為準）' : '應付總額（貨到付款）'}</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
+          <div style="font-size:14px; font-weight:700; color:var(--c-coffee); display:flex; justify-content:space-between; border-top:0.5px solid var(--c-blush); padding-top:6px; margin-top:4px"><span>${hasHomeDelivery ? '應付總額（請私訊小編匯款）' : (hasPreorder ? '預估總額（實際依小編確認為準）' : '應付總額（貨到付款）')}</span><span id="cvs_total" style="color:var(--c-orange)"></span></div>
         </div>
-        <button class="btn-primary" id="confirmCvsBtn" style="margin-top:6px">${hasPreorder ? '確認並前往 LINE 通知小編' : '確認送出訂單'}</button>
+        <button class="btn-primary" id="confirmCvsBtn" style="margin-top:6px">${hasHomeDelivery ? '確認並前往 LINE 通知小編' : (hasPreorder ? '確認並前往 LINE 通知小編' : '確認送出訂單')}</button>
       </div>
     </div>
   `;
@@ -376,7 +400,7 @@ function openCvsForm() {
   // 優惠碼只折商品小計，運費一律照原本規則計算，不受折扣影響
   const discount = appliedCoupon ? calcCouponDiscount(appliedCoupon, total) : 0;
   const totalAfterDiscount = total - discount;
-  const shipping = calcShippingFee(total);
+  const shipping = calcShippingFee(total, hasHomeDelivery);
   document.getElementById('cvs_subtotal').textContent = formatPrice(total);
   if (discount > 0) {
     document.getElementById('cvs_discountRow').style.display = 'flex';
@@ -390,19 +414,24 @@ function openCvsForm() {
   document.getElementById('closeCvsForm').addEventListener('click', close);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
 
-  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay, hasPreorder, appliedCoupon, discount));
+  document.getElementById('confirmCvsBtn').addEventListener('click', () => submitCvsOrder(cart, lineName, total, shipping, overlay, hasPreorder, appliedCoupon, discount, hasHomeDelivery));
 }
 
-async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPreorder, coupon, estimatedDiscount) {
+async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPreorder, coupon, estimatedDiscount, hasHomeDelivery) {
   const name = document.getElementById('cvs_name').value.trim();
   const phone = document.getElementById('cvs_phone').value.trim();
-  const store = document.getElementById('cvs_store').value.trim();
-  const storeName = document.getElementById('cvs_storeName').value.trim();
+  const store = hasHomeDelivery ? '' : document.getElementById('cvs_store').value.trim();
+  const storeName = hasHomeDelivery ? '' : document.getElementById('cvs_storeName').value.trim();
+  const address = hasHomeDelivery ? document.getElementById('cvs_address').value.trim() : '';
 
-  if (!name) { showToast('請填寫取件人姓名'); return; }
+  if (!name) { showToast(`請填寫${hasHomeDelivery ? '收件人' : '取件人'}姓名`); return; }
   if (!/^09\d{8}$/.test(phone)) { showToast('請填寫正確的10碼手機號碼'); return; }
-  if (!storeName) { showToast('請填寫取件門市名稱'); return; }
-  if (store && !/^\d{6}$/.test(store)) { showToast('門市店號格式不正確，請填寫6碼數字，或留空由小編協助查詢'); return; }
+  if (hasHomeDelivery) {
+    if (!address) { showToast('請填寫收件地址'); return; }
+  } else {
+    if (!storeName) { showToast('請填寫取件門市名稱'); return; }
+    if (store && !/^\d{6}$/.test(store)) { showToast('門市店號格式不正確，請填寫6碼數字，或留空由小編協助查詢'); return; }
+  }
 
   const btn = document.getElementById('confirmCvsBtn');
   btn.disabled = true;
@@ -440,7 +469,7 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
 
     if (hasPreorder) {
       btn.textContent = '產生圖片中...';
-      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store }, discount > 0 ? { code: appliedCouponCode, discount } : null);
+      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store, address, hasHomeDelivery }, discount > 0 ? { code: appliedCouponCode, discount } : null);
     }
 
     // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），
@@ -454,12 +483,16 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
     btn.textContent = '送出中...';
     await db.collection(COL.ORDERS).add({
       orderType: hasPreorder ? 'line' : 'cvs',
+      deliveryMethod: hasHomeDelivery ? 'homeDelivery' : 'cvs',
       orderNo: orderNo,
       lineName: lineName,
       cvsName: name,
       cvsPhone: phone,
       cvsStore: store,
       cvsStoreName: storeName,
+      address: address,
+      // 宅配訂單需要客人自己私訊小編拿匯款帳號、匯款後由小編在後台手動標記，不是送出訂單當下就確認付款
+      paymentConfirmed: hasHomeDelivery ? false : null,
       items: cart,
       subtotal: subtotal,
       couponCode: appliedCouponCode,
@@ -477,7 +510,7 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
 
     sessionStorage.setItem('kzone_last_order', JSON.stringify({
       orderNo,
-      orderType: hasPreorder ? 'preorder' : 'cvs',
+      orderType: hasHomeDelivery ? 'homeDelivery' : (hasPreorder ? 'preorder' : 'cvs'),
       // 把已經讀好的 LINE 連結一起帶過去，讓結帳完成頁不需要再重新跟 Firestore 要一次資料，
       // 客人一到頁面就能立刻點「聯繫 LINE 官方小編」，不用等網路回應（這是客人反映按了沒反應的主因）
       lineOfficialUrl: settings.lineOfficialUrl || '',
@@ -488,6 +521,13 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       // 預購一定要提醒客人「主動把剛剛下載的圖片傳過去」，不然很多人開了LINE聊天室卻忘記真的送出圖片，
       // 官方帳號那邊完全收不到，就一直卡在等待確認的狀態
       showToast('訂單圖片已下載！請務必將圖片傳送給官方小編確認');
+      setTimeout(() => {
+        window.open(normalizeExternalUrl(settings.lineOfficialUrl), '_blank');
+        location.href = 'order-complete.html';
+      }, 1200);
+    } else if (hasHomeDelivery) {
+      // 現貨但需要宅配：訂單已成立、庫存已扣，但還需要客人私訊小編拿匯款帳號並完成轉帳，才會安排出貨
+      showToast('訂單已送出！請私訊官方小編取得匯款帳號');
       setTimeout(() => {
         window.open(normalizeExternalUrl(settings.lineOfficialUrl), '_blank');
         location.href = 'order-complete.html';

@@ -169,7 +169,9 @@ function getProductCategoryIds(product) {
 }
 
 // 運費規則：滿5000免運，其他一律38元
-function calcShippingFee(orderTotal) {
+// 宅配訂單（商品太大/太重需要宅配的）運費固定80元，不適用滿額免運規則
+function calcShippingFee(orderTotal, hasHomeDelivery) {
+  if (hasHomeDelivery) return 80;
   return orderTotal >= 5000 ? 0 : 38;
 }
 

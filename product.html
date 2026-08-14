@@ -447,7 +447,8 @@ function doAddToCart() {
     style: selectedStyle || '',
     qty: qty,
     image: (product.images && product.images[0]) || '',
-    stockType: getStyleStockType(product, selectedStyle)
+    stockType: getStyleStockType(product, selectedStyle),
+    deliveryMethod: product.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs'
   });
   refreshCartBadge();
   showToast(`已加入購物車：${product.name} x${qty}`);
