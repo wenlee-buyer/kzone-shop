@@ -41,9 +41,9 @@ async function renderOrdersPage() {
       </div>
       <div class="admin-card" style="margin-bottom:0">
         <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
-          <span class="pill pill-preorder">LINE</span> 含預購訂單
+          <span class="pill pill-preorder">LINE</span> 含預購／宅配訂單
         </h3>
-        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">需透過 LINE 官方帳號確認</p>
+        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">需透過 LINE 官方帳號確認（含需匯款的宅配訂單）</p>
         <div id="ordersListLine"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
       </div>
     </div>
@@ -74,8 +74,10 @@ async function loadAndRenderOrders() {
     const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
     const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    const cvsOrders = orders.filter(o => o.orderType === 'cvs');
-    const lineOrders = orders.filter(o => o.orderType !== 'cvs');
+    // 宅配訂單雖然 orderType 可能是 'cvs'（現貨、不用等小編確認），但取貨方式不是超商取貨，
+    // 賣貨便匯出格式也不適用，所以歸到右邊「需透過 LINE 確認」欄位一起處理（因為也需要私訊小編拿匯款帳號）
+    const cvsOrders = orders.filter(o => o.orderType === 'cvs' && o.deliveryMethod !== 'homeDelivery');
+    const lineOrders = orders.filter(o => o.orderType !== 'cvs' || o.deliveryMethod === 'homeDelivery');
 
     renderOrderColumn(cvs, cvsOrders, 'cvs');
     renderOrderColumn(line, lineOrders, 'line');
@@ -133,6 +135,7 @@ function renderOrderColumn(container, orders, colType) {
     document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
     document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
     document.getElementById(`edit-order-${order.id}`)?.addEventListener('click', () => openEditOrderModal(order));
+    document.getElementById(`payment-order-${order.id}`)?.addEventListener('click', () => togglePaymentConfirmed(order));
     document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
       const detail = document.getElementById(`detail-order-${order.id}`);
       detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
@@ -153,11 +156,21 @@ function renderOrderCard(order) {
   const dateStr = `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
   const itemCount = (order.items || []).reduce((sum, i) => sum + i.qty, 0);
   const isCvs = order.orderType === 'cvs';
+  const isHomeDelivery = order.deliveryMethod === 'homeDelivery';
   const isShipped = !!order.shippedAt;
+  const isPaymentConfirmed = !!order.paymentConfirmed;
 
-  const typePill = isCvs
-    ? `<span class="pill pill-instock">超商取貨</span>`
-    : `<span class="pill pill-preorder">LINE／含預購</span>`;
+  const typePill = isHomeDelivery
+    ? `<span class="pill" style="background:#e6e0f7; color:#5a4a9c">宅配</span>`
+    : (isCvs
+        ? `<span class="pill pill-instock">超商取貨</span>`
+        : `<span class="pill pill-preorder">LINE／含預購</span>`);
+
+  const paymentPill = isHomeDelivery
+    ? (isPaymentConfirmed
+        ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已匯款</span>`
+        : `<span class="pill" style="background:#fbe1e1; color:#a33; margin-left:4px">待轉帳</span>`)
+    : '';
 
   const shippedPill = isShipped
     ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已出貨</span>`
@@ -180,16 +193,22 @@ function renderOrderCard(order) {
     ? `<br>已收訂金：${formatPrice(order.depositReceived)}`
     : '';
 
+  const recipientLine = isHomeDelivery
+    ? `收件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')}<br>收件地址：${escapeHtml(order.address || '-')}`
+    : `取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}`;
+
   const cvsInfo = isCvs ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
-      取件人：${escapeHtml(order.cvsName || '-')} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
+      ${recipientLine}<br>
       商品小計：${formatPrice(order.subtotal)}${couponLine}${manualDiscountLine} ・ 運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 應付總額：${formatPrice(order.total)}${depositLine}
+      ${isHomeDelivery ? `<br>轉帳狀態：${isPaymentConfirmed ? '✅ 已匯款' : '⏳ 待轉帳（客人需私訊取得匯款帳號）'}` : ''}
     </div>
   ` : (order.cvsName ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
       （預購客人已預填取貨資訊，供小編確認參考，最終以 LINE 溝通為準）<br>
-      取件人：${escapeHtml(order.cvsName)} ・ 手機：${escapeHtml(order.cvsPhone || '-')} ・ 門市店號：${escapeHtml(order.cvsStore || '-')}${order.cvsStoreName ? ` (${escapeHtml(order.cvsStoreName)})` : ''}<br>
+      ${recipientLine}<br>
       商品小計：${formatPrice(order.subtotal)}${couponLine}${manualDiscountLine} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}${depositLine}
+      ${isHomeDelivery ? `<br>轉帳狀態：${isPaymentConfirmed ? '✅ 已匯款' : '⏳ 待轉帳（客人需私訊取得匯款帳號）'}` : ''}
     </div>
   ` : '');
 
@@ -198,13 +217,14 @@ function renderOrderCard(order) {
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${isShipped ? '#edfaf6' : 'var(--c-cream)'}" id="toggle-order-${order.id}">
         <div style="flex:1; min-width:0">
           <div style="font-size:13px; font-weight:700; color:var(--c-coffee); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
-            ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${shippedPill}
+            ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${paymentPill} ${shippedPill}
           </div>
           <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
             ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(order.total)}${order.orderNo ? ` ・ 編號：${escapeHtml(order.orderNo)}` : ''}
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
+          ${isHomeDelivery ? `<button class="btn-icon ${isPaymentConfirmed ? '' : 'active-accent'}" id="payment-order-${order.id}" title="${isPaymentConfirmed ? '取消已匯款標記' : '標記已匯款'}" style="font-size:11px; padding:6px 8px">${isPaymentConfirmed ? '取消已匯款' : '標記已匯款'}</button>` : ''}
           ${!isShipped ? `<button class="btn-icon" id="edit-order-${order.id}" title="編輯商品/金額" style="font-size:11px; padding:6px 8px">編輯</button>` : ''}
           <button class="btn-icon ${isShipped ? '' : 'active-accent'}" id="ship-order-${order.id}" title="${isShipped ? '修改出貨資訊' : '標記出貨'}" style="font-size:11px; padding:6px 8px">
             ${isShipped ? '修改出貨' : '標記出貨'}
@@ -224,6 +244,15 @@ function renderOrderCard(order) {
       </div>
     </div>
   `;
+}
+
+// 宅配訂單：因為帳號不公開在網站上，客人要私訊小編才能拿到，匯款完成與否只能由小編這邊手動標記
+async function togglePaymentConfirmed(order) {
+  const newValue = !order.paymentConfirmed;
+  if (newValue && !confirm(`確定要標記「${order.lineName || '此訂單'}」已完成匯款嗎？`)) return;
+  await db.collection(COL.ORDERS).doc(order.id).update({ paymentConfirmed: newValue });
+  showToast(newValue ? '已標記為已匯款' : '已取消已匯款標記');
+  loadAndRenderOrders();
 }
 
 async function deleteOrder(orderId) {
@@ -566,7 +595,8 @@ function addItemToEditOrder(product, style) {
       qty: 1,
       price: getStylePrice(product, style),
       image: (product.images && product.images[0]) || '',
-      stockType: getStyleStockType(product, style)
+      stockType: getStyleStockType(product, style),
+      deliveryMethod: product.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs'
     });
   }
   renderEditOrderItems();
@@ -657,6 +687,7 @@ async function exportOrdersToExcel() {
 
     const orders = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
+      .filter(o => o.deliveryMethod !== 'homeDelivery') // 宅配訂單不是超商取貨，賣貨便格式不適用，排除掉
       .filter(o => {
         const t = o.createdAt?.toDate ? o.createdAt.toDate() : null;
         return t && t >= startDate && t <= endDate;

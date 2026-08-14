@@ -144,6 +144,7 @@ function renderProductRow(p) {
     : (p.stockType === 'preorder'
         ? `<span class="pill pill-preorder">預購</span>`
         : `<span class="pill pill-instock">現貨</span>`);
+  const deliveryPill = p.deliveryMethod === 'homeDelivery' ? `<span class="pill" style="background:#e6e0f7;color:#5a4a9c;margin-left:4px">宅配</span>` : '';
   const archivedPill = p.archived ? `<span class="pill pill-archived" style="margin-left:4px">已封存</span>` : '';
   const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33;margin-left:4px">已售完</span>` : '';
   const img = (p.images && p.images[0]) || '';
@@ -168,7 +169,7 @@ function renderProductRow(p) {
       <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
       <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
       <td style="white-space:normal">${catNames.length > 0 ? catNames.map(n => `<span class="pill pill-instock" style="margin:1px 2px; display:inline-block">${escapeHtml(n)}</span>`).join('') : '-'}</td>
-      <td>${stockPill}${archivedPill}${soldOutPill}</td>
+      <td>${stockPill}${deliveryPill}${archivedPill}${soldOutPill}</td>
       <td>${formatPrice(p.price)}</td>
       <td style="font-size:11px">${stockInfo}</td>
       <td>
@@ -353,6 +354,14 @@ function openProductEditor(product, opts = {}) {
         </div>
 
         <div class="field">
+          <label class="field-label">取貨方式 *（商品太大/太重需要宅配時選「宅配」，結帳流程會改成收地址+匯款）</label>
+          <div class="tag-chip-list">
+            <div class="tag-chip ${(!product || product.deliveryMethod !== 'homeDelivery') ? 'selected' : ''}" data-delivery="cvs">超商取貨付款</div>
+            <div class="tag-chip ${product?.deliveryMethod === 'homeDelivery' ? 'selected' : ''}" data-delivery="homeDelivery">宅配（需匯款）</div>
+          </div>
+        </div>
+
+        <div class="field">
           <label class="field-label">角色標籤（可複選）</label>
           <div class="tag-chip-list" id="pf_tagChips">
             ${appState.tags.map(t => `<div class="tag-chip ${product?.tagIds?.includes(t.id) ? 'selected' : ''}" data-tag="${t.id}">${escapeHtml(t.name)}</div>`).join('')}
@@ -464,6 +473,14 @@ function openProductEditor(product, opts = {}) {
   overlay.querySelectorAll('[data-stock]').forEach(chip => {
     chip.addEventListener('click', () => {
       overlay.querySelectorAll('[data-stock]').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+
+  // 取貨方式單選
+  overlay.querySelectorAll('[data-delivery]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('[data-delivery]').forEach(c => c.classList.remove('selected'));
       chip.classList.add('selected');
     });
   });
@@ -710,6 +727,7 @@ async function saveProduct(styles) {
   const stock = stockVal === '' ? null : parseInt(stockVal);
   const recommendation = document.getElementById('pf_recommendation').value.trim();
   const stockType = document.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
+  const deliveryMethod = document.querySelector('[data-delivery].selected')?.dataset.delivery || 'cvs';
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
   const featured = document.getElementById('pf_featured').checked;
   // 排序值不再由這個表單填寫，改成在「商品管理」列表拖拉排序；
@@ -760,7 +778,7 @@ async function saveProduct(styles) {
     }
 
     const productData = {
-      name, categoryIds, price, recommendation, stockType, tagIds,
+      name, categoryIds, price, recommendation, stockType, deliveryMethod, tagIds,
       featured, sortOrder,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,
