@@ -21,13 +21,13 @@ async function renderSortPage() {
     <div class="admin-card" style="background:var(--c-cream); border-color:var(--c-sand); margin-bottom:16px">
       <p style="font-size:12px; color:var(--c-coffee); line-height:1.8">
         ${icon('info-circle', 14)}
-        上下拖拉卡片即可調整順序。儲存後前台商品會依此順序排列（缺貨商品仍會自動排到最後）。<br>
+        直接拖拉商品圖片即可調整順序，儲存後前台商品會依此順序排列（缺貨商品仍會自動排到最後）。<br>
         若要新增或移除首頁精選商品，請到「商品管理」頁面編輯商品的「精選顯示在首頁」勾選框。
       </p>
     </div>
 
     <div class="admin-card" style="padding:12px">
-      <div id="sortableList" style="min-height:80px">
+      <div id="sortableList" class="sort-grid" style="min-height:80px">
         <div class="loading-wrap"><div class="spin"></div>載入商品中...</div>
       </div>
     </div>
@@ -77,19 +77,13 @@ function renderSortableList() {
     const img = (p.images && p.images[0]) || '';
     const isSoldOut = isProductSoldOut(p);
     return `
-      <div class="sort-item" data-id="${p.id}" draggable="true">
-        <div class="sort-handle">${icon('menu', 18)}</div>
-        <div class="sort-thumb">
-          ${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<div style="width:100%;height:100%;background:var(--c-blush);border-radius:6px"></div>`}
+      <div class="sort-grid-item" data-id="${p.id}" draggable="true" title="${escapeHtml(p.name)}">
+        <div class="sort-grid-thumb">
+          ${img ? `<img src="${escapeHtml(img)}">` : ''}
+          <div class="sort-grid-num">${idx + 1}</div>
+          ${isSoldOut ? `<div class="sort-grid-soldout">已售完<br>自動排最後</div>` : ''}
         </div>
-        <div class="sort-info">
-          <div style="font-size:13px; font-weight:500; color:var(--c-coffee)">${escapeHtml(p.name)}</div>
-          <div style="font-size:11px; color:var(--c-rose-text); margin-top:2px">
-            ${formatPrice(p.price)}
-            ${isSoldOut ? `<span style="color:#a33; margin-left:6px">・ 已售完（會自動排到最後）</span>` : ''}
-          </div>
-        </div>
-        <div class="sort-order-num">${idx + 1}</div>
+        <div class="sort-grid-name">${escapeHtml(p.name)}</div>
       </div>
     `;
   }).join('');
@@ -102,7 +96,7 @@ function initDragAndDrop() {
   let dragItem = null;
   let dragOverItem = null;
 
-  list.querySelectorAll('.sort-item').forEach(item => {
+  list.querySelectorAll('.sort-grid-item').forEach(item => {
     item.addEventListener('dragstart', (e) => {
       dragItem = item;
       item.classList.add('sort-dragging');
@@ -111,15 +105,15 @@ function initDragAndDrop() {
 
     item.addEventListener('dragend', () => {
       item.classList.remove('sort-dragging');
-      list.querySelectorAll('.sort-item').forEach(i => i.classList.remove('sort-over'));
+      list.querySelectorAll('.sort-grid-item').forEach(i => i.classList.remove('sort-over'));
       dragItem = null;
       dragOverItem = null;
       // 更新序號顯示
-      list.querySelectorAll('.sort-item').forEach((i, idx) => {
-        i.querySelector('.sort-order-num').textContent = idx + 1;
+      list.querySelectorAll('.sort-grid-item').forEach((i, idx) => {
+        i.querySelector('.sort-grid-num').textContent = idx + 1;
       });
       // 同步更新 sortPageProducts 陣列的順序
-      const newOrder = Array.from(list.querySelectorAll('.sort-item')).map(i => i.dataset.id);
+      const newOrder = Array.from(list.querySelectorAll('.sort-grid-item')).map(i => i.dataset.id);
       sortPageProducts.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
     });
 
@@ -127,7 +121,7 @@ function initDragAndDrop() {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       if (item !== dragItem) {
-        list.querySelectorAll('.sort-item').forEach(i => i.classList.remove('sort-over'));
+        list.querySelectorAll('.sort-grid-item').forEach(i => i.classList.remove('sort-over'));
         item.classList.add('sort-over');
         dragOverItem = item;
       }
@@ -136,7 +130,7 @@ function initDragAndDrop() {
     item.addEventListener('drop', (e) => {
       e.preventDefault();
       if (dragItem && dragOverItem && dragItem !== dragOverItem) {
-        const allItems = Array.from(list.querySelectorAll('.sort-item'));
+        const allItems = Array.from(list.querySelectorAll('.sort-grid-item'));
         const fromIdx = allItems.indexOf(dragItem);
         const toIdx = allItems.indexOf(dragOverItem);
         if (fromIdx < toIdx) {
@@ -147,7 +141,8 @@ function initDragAndDrop() {
       }
     });
 
-    // 手機觸控支援
+    // 手機觸控支援（改成方格排版後，同一列會有好幾個商品，判斷手指位置時要同時比對 X 和 Y，
+    // 不然只比對上下範圍的話，同一列的商品都會被誤判成同一個目標）
     let touchStartY = 0;
     let touchItem = null;
 
@@ -159,19 +154,20 @@ function initDragAndDrop() {
 
     item.addEventListener('touchmove', (e) => {
       e.preventDefault();
+      const touchX = e.touches[0].clientX;
       const touchY = e.touches[0].clientY;
-      const allItems = Array.from(list.querySelectorAll('.sort-item'));
+      const allItems = Array.from(list.querySelectorAll('.sort-grid-item'));
       let target = null;
       for (const i of allItems) {
         if (i === touchItem) continue;
         const rect = i.getBoundingClientRect();
-        if (touchY >= rect.top && touchY <= rect.bottom) {
+        if (touchX >= rect.left && touchX <= rect.right && touchY >= rect.top && touchY <= rect.bottom) {
           target = i;
           break;
         }
       }
       if (target) {
-        list.querySelectorAll('.sort-item').forEach(i => i.classList.remove('sort-over'));
+        list.querySelectorAll('.sort-grid-item').forEach(i => i.classList.remove('sort-over'));
         target.classList.add('sort-over');
         dragOverItem = target;
       }
@@ -179,7 +175,7 @@ function initDragAndDrop() {
 
     item.addEventListener('touchend', () => {
       if (touchItem && dragOverItem && touchItem !== dragOverItem) {
-        const allItems = Array.from(list.querySelectorAll('.sort-item'));
+        const allItems = Array.from(list.querySelectorAll('.sort-grid-item'));
         const fromIdx = allItems.indexOf(touchItem);
         const toIdx = allItems.indexOf(dragOverItem);
         if (fromIdx < toIdx) {
@@ -189,11 +185,11 @@ function initDragAndDrop() {
         }
       }
       touchItem?.classList.remove('sort-dragging');
-      list.querySelectorAll('.sort-item').forEach(i => i.classList.remove('sort-over'));
-      list.querySelectorAll('.sort-item').forEach((i, idx) => {
-        i.querySelector('.sort-order-num').textContent = idx + 1;
+      list.querySelectorAll('.sort-grid-item').forEach(i => i.classList.remove('sort-over'));
+      list.querySelectorAll('.sort-grid-item').forEach((i, idx) => {
+        i.querySelector('.sort-grid-num').textContent = idx + 1;
       });
-      const newOrder = Array.from(list.querySelectorAll('.sort-item')).map(i => i.dataset.id);
+      const newOrder = Array.from(list.querySelectorAll('.sort-grid-item')).map(i => i.dataset.id);
       sortPageProducts.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
       touchItem = null;
       dragOverItem = null;
@@ -209,7 +205,7 @@ async function saveSortOrder() {
   try {
     // 取得目前畫面上的排序
     const list = document.getElementById('sortableList');
-    const orderedIds = Array.from(list.querySelectorAll('.sort-item')).map(i => i.dataset.id);
+    const orderedIds = Array.from(list.querySelectorAll('.sort-grid-item')).map(i => i.dataset.id);
 
     // 批次寫入每個商品的 sortOrder
     const batch = db.batch();

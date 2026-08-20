@@ -81,22 +81,46 @@
   .admin-table { display: block; overflow-x: auto; white-space: nowrap; }
 }
 
-/* ---------- 首頁排序拖拉樣式 ---------- */
-.sort-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px; border-radius: 10px; margin-bottom: 6px;
-  background: #fff; border: 1px solid var(--c-blush);
-  cursor: grab; user-select: none; transition: box-shadow 0.15s ease;
+/* ---------- 首頁排序拖拉樣式（方形圖片格子，直接拖圖就好，不用再上下拖長條） ---------- */
+.sort-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
 }
-.sort-item:active { cursor: grabbing; }
-.sort-dragging { opacity: 0.5; box-shadow: 0 4px 16px rgba(107,63,42,0.18); }
-.sort-over { border: 1.5px dashed var(--c-orange); background: #fff8f5; }
-.sort-handle { color: var(--c-rose); flex-shrink: 0; cursor: grab; }
-.sort-thumb { width: 48px; height: 48px; flex-shrink: 0; }
-.sort-info { flex: 1; min-width: 0; }
-.sort-order-num {
-  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+.sort-grid-item {
+  cursor: grab; user-select: none; -webkit-user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+  border-radius: 10px;
+}
+.sort-grid-item:active { cursor: grabbing; }
+.sort-grid-thumb {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--c-blush);
+  border: 1px solid var(--c-blush);
+}
+.sort-grid-thumb img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.sort-grid-num {
+  position: absolute; top: 5px; left: 5px;
+  width: 24px; height: 24px; border-radius: 50%;
   background: var(--c-coffee); color: #fff;
-  font-size: 12px; font-weight: 700;
+  font-size: 11px; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
 }
+.sort-grid-soldout {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.45); color: #fff;
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; pointer-events: none;
+}
+.sort-grid-name {
+  margin-top: 5px; font-size: 11px; color: var(--c-coffee);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
+}
+.sort-grid-item.sort-dragging { opacity: 0.4; transform: scale(0.96); }
+.sort-grid-item.sort-over .sort-grid-thumb { border: 2px dashed var(--c-orange); }
