@@ -731,7 +731,9 @@ async function saveProduct(styles) {
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
   const featured = document.getElementById('pf_featured').checked;
   // 排序值不再由這個表單填寫，改成在「商品管理」列表拖拉排序；
-  // 編輯既有商品時保留原本的排序值，新增/複製的商品預設排最後，再由拖拉排序決定實際位置
+  // 編輯既有商品時保留原本的排序值；新增/複製的商品要排在「該分類最前面」（新品優先曝光），
+  // 之後才由拖拉排序決定實際位置。實際計算（要抓現有商品的最小排序值）留到後面存檔時再做，
+  // 這裡先給預設值，避免下面還沒查完資料庫前的程式碼誤用到 undefined
   const sortOrder = productsPageState.editingProduct
     ? (productsPageState.editingProduct.sortOrder ?? 9999)
     : 9999;
@@ -777,9 +779,30 @@ async function saveProduct(styles) {
         : await uploadVideoToStorage(pendingVideo.file, 'products');
     }
 
+    // 新增/複製商品時，要讓新商品排在「全部商品」跟「所屬每個分類」的最前面，
+    // 所以要先查一次目前現有商品最小的排序值，新商品的排序值設成比它更小（可以是負數，只是用來比大小，不影響顯示）
+    let newSortOrder = sortOrder;
+    let newSortOrderByCategory = productsPageState.editingProduct ? (productsPageState.editingProduct.sortOrderByCategory || {}) : {};
+    if (!productsPageState.editingProduct) {
+      const existingSnap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
+      const existingProducts = existingSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      newSortOrder = existingProducts.length > 0
+        ? Math.min(...existingProducts.map(p => p.sortOrder ?? 9999)) - 1
+        : 1;
+
+      newSortOrderByCategory = {};
+      categoryIds.forEach(catId => {
+        const inCat = existingProducts.filter(p => getProductCategoryIds(p).includes(catId));
+        newSortOrderByCategory[catId] = inCat.length > 0
+          ? Math.min(...inCat.map(p => getCategorySortOrder(p, catId))) - 1
+          : 1;
+      });
+    }
+
     const productData = {
       name, categoryIds, price, recommendation, stockType, deliveryMethod, tagIds,
-      featured, sortOrder,
+      featured, sortOrder: newSortOrder, sortOrderByCategory: newSortOrderByCategory,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,
       images: imageUrls,

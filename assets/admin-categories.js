@@ -50,6 +50,9 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
       list.innerHTML = `<div class="empty-state">${icon('tag-off', 18)}尚未新增任何${itemLabel}</div>`;
       return;
     }
+    // 只有「來源分類」在前台商品列表頁有對應的網址可以分享（products.html?cat=分類ID），角色標籤沒有這個功能
+    const isCategory = collectionName === COL.CATEGORIES;
+
     list.innerHTML = `
       <table class="admin-table">
         <thead><tr><th>順序</th><th>${itemLabel}名稱</th><th>操作</th></tr></thead>
@@ -65,6 +68,7 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
               <td><input type="text" value="${escapeHtml(item.name)}" data-edit-name="${item.id}" style="border:0.5px solid var(--c-blush); border-radius:6px; padding:6px 9px; font-size:13px; width:160px"></td>
               <td>
                 <div style="display:flex; gap:6px">
+                  ${isCategory ? `<button class="btn-icon" data-copy-link="${item.id}" title="複製這個分類的網址，可傳給客人直接看該分類商品">${icon('link', 18)}</button>` : ''}
                   <button class="btn-icon" data-save="${item.id}" title="儲存名稱">${icon('check', 18)}</button>
                   <button class="btn-icon danger" data-delete="${item.id}" title="刪除">${icon('trash', 18)}</button>
                 </div>
@@ -91,6 +95,12 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
         await reloadCoreData();
         renderList();
         showToast('已刪除');
+      });
+      document.querySelector(`[data-copy-link="${item.id}"]`)?.addEventListener('click', async () => {
+        // admin-dashboard.html 跟 products.html 是同一層目錄，把檔名換掉就是前台分類頁的網址
+        const url = `${location.origin}${location.pathname.replace(/admin-dashboard\.html$/, '')}products.html?cat=${encodeURIComponent(item.id)}`;
+        const ok = await copyTextToClipboard(url);
+        showToast(ok ? `已複製「${item.name}」的分類連結！` : '複製失敗，請手動選取複製');
       });
       document.querySelector(`[data-move-up="${item.id}"]`)?.addEventListener('click', () => moveItem(item.id, -1));
       document.querySelector(`[data-move-down="${item.id}"]`)?.addEventListener('click', () => moveItem(item.id, 1));
