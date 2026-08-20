@@ -153,10 +153,26 @@ async function init() {
   categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
+  // 支援直接分享某個分類的網址（例如 index.html?cat=xxx），一進首頁就先選好該分類，
+  // 網址列也要能反映目前選的分類，這樣客人才能把網址複製傳出去給別人
+  const catFromUrl = new URLSearchParams(location.search).get('cat');
+  if (catFromUrl) currentCatFilter = catFromUrl;
+
   applySettings();
   renderCategoryNav();
   renderTagFilters();
   await loadProducts();
+}
+
+// 把目前選的分類同步反映到網址列（不會整頁重新整理），這樣分類頁也有專屬網址可以分享
+function updateCategoryUrl(catId) {
+  const url = new URL(location.href);
+  if (catId === 'all') {
+    url.searchParams.delete('cat');
+  } else {
+    url.searchParams.set('cat', catId);
+  }
+  history.replaceState(null, '', url.toString());
 }
 
 function applySettings() {
@@ -183,10 +199,10 @@ function applySettings() {
 
 function renderCategoryNav() {
   const list = document.getElementById('srcNavList');
-  let html = `<button class="sn-item active" data-cat="all">全部</button>`;
-  html += `<button class="sn-item" data-cat="new">✨ 最新上架</button>`;
+  let html = `<button class="sn-item ${currentCatFilter === 'all' ? 'active' : ''}" data-cat="all">全部</button>`;
+  html += `<button class="sn-item ${currentCatFilter === 'new' ? 'active' : ''}" data-cat="new">✨ 最新上架</button>`;
   categories.forEach(cat => {
-    html += `<button class="sn-item" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
+    html += `<button class="sn-item ${currentCatFilter === cat.id ? 'active' : ''}" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
   });
   list.innerHTML = html;
   list.querySelectorAll('.sn-item').forEach(btn => {
@@ -194,6 +210,7 @@ function renderCategoryNav() {
       list.querySelectorAll('.sn-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentCatFilter = btn.dataset.cat;
+      updateCategoryUrl(currentCatFilter);
       filterAndRender();
     });
   });

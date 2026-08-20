@@ -158,10 +158,22 @@ function renderCategoryNav() {
       list.querySelectorAll('.sn-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentCatFilter = btn.dataset.cat;
+      updateCategoryUrl(currentCatFilter);
       displayCount = 24;
       filterAndRender();
     });
   });
+}
+
+// 把目前選的分類同步反映到網址列（不會整頁重新整理），這樣分類頁也有專屬網址可以分享
+function updateCategoryUrl(catId) {
+  const url = new URL(location.href);
+  if (catId === 'all') {
+    url.searchParams.delete('cat');
+  } else {
+    url.searchParams.set('cat', catId);
+  }
+  history.replaceState(null, '', url.toString());
 }
 
 function renderTagFilters() {
