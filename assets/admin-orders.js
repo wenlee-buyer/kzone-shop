@@ -48,6 +48,16 @@ async function renderOrdersPage() {
       </div>
     </div>
 
+    <div class="admin-card" style="margin-top:16px; margin-bottom:0">
+      <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
+        <span class="pill" style="background:#fbe1e1; color:#a33">下單失敗</span> 結帳失敗紀錄
+      </h3>
+      <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">
+        客人有按送出但訂單沒有成立的紀錄（例如庫存不足）。請確認庫存或聯繫客人補單，處理完可標記已處理。
+      </p>
+      <div id="failedOrdersList"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
+    </div>
+
     <style>
       @media (max-width: 860px) {
         #ordersListCvs, #ordersListLine { }
@@ -65,6 +75,91 @@ async function renderOrdersPage() {
   document.getElementById('exportOrdersBtn').addEventListener('click', exportOrdersToExcel);
 
   await loadAndRenderOrders();
+  await loadAndRenderFailedOrders();
+}
+
+// 結帳失敗紀錄：客人按了送出卻沒能成立訂單的情況，一定要讓店家看得到
+async function loadAndRenderFailedOrders() {
+  const wrap = document.getElementById('failedOrdersList');
+  if (!wrap) return;
+  try {
+    // 這裡不加 where('resolved','==',false)，因為要連已處理的也一起顯示（已處理的收起來放後面），
+    // 而且單一 orderBy 不需要額外建立複合索引
+    const snap = await db.collection(COL.FAILED_ORDERS).orderBy('createdAt', 'desc').limit(100).get();
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const pending = all.filter(f => !f.resolved);
+    const resolved = all.filter(f => !!f.resolved);
+
+    if (all.length === 0) {
+      wrap.innerHTML = `<div class="empty-state" style="padding:20px 10px">${icon('circle-check', 18)}<p style="margin-top:8px">目前沒有失敗紀錄</p></div>`;
+      return;
+    }
+
+    let html = pending.map(f => renderFailedOrderCard(f)).join('');
+    if (resolved.length > 0) {
+      html += `<div style="border-top:1.5px dashed var(--c-blush); margin:12px 0 10px; padding-top:10px">
+        <div style="font-size:11px; color:var(--c-rose-text); margin-bottom:8px">
+          ${icon('check', 12)} 已處理（${resolved.length} 筆）
+        </div>
+        ${resolved.map(f => renderFailedOrderCard(f)).join('')}
+      </div>`;
+    }
+    wrap.innerHTML = html;
+
+    all.forEach(f => {
+      document.getElementById(`resolve-failed-${f.id}`)?.addEventListener('click', async () => {
+        await db.collection(COL.FAILED_ORDERS).doc(f.id).update({ resolved: !f.resolved });
+        showToast(f.resolved ? '已改回未處理' : '已標記為已處理');
+        loadAndRenderFailedOrders();
+      });
+      document.getElementById(`del-failed-${f.id}`)?.addEventListener('click', async () => {
+        if (!confirm('確定要刪除這筆失敗紀錄嗎？')) return;
+        await db.collection(COL.FAILED_ORDERS).doc(f.id).delete();
+        showToast('已刪除');
+        loadAndRenderFailedOrders();
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入失敗紀錄失敗</div>`;
+  }
+}
+
+function renderFailedOrderCard(f) {
+  const date = f.createdAt?.toDate ? f.createdAt.toDate() : null;
+  const dateStr = date
+    ? `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`
+    : '時間不明';
+  const isResolved = !!f.resolved;
+  const itemCount = (f.items || []).reduce((s, i) => s + (i.qty || 0), 0);
+
+  return `
+    <div style="border:1.5px solid ${isResolved ? '#b2dfdb' : '#f0c9c9'}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${isResolved ? '#f9fffe' : '#fffafa'}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:12px 14px; gap:8px">
+        <div style="flex:1; min-width:0">
+          <div style="font-size:13px; font-weight:700; color:var(--c-coffee); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
+            ${icon('user', 14)} ${escapeHtml(f.lineName || '未提供')}
+            <span class="pill" style="background:${isResolved ? '#d4edda' : '#fbe1e1'}; color:${isResolved ? '#1a5c2a' : '#a33'}">${isResolved ? '已處理' : escapeHtml(f.reason || '失敗')}</span>
+            ${f.stockAlreadyDeducted ? `<span class="pill" style="background:#fff3cd; color:#856404">庫存已扣・需人工加回</span>` : ''}
+          </div>
+          <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
+            ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ ${formatPrice(f.total || 0)}${f.orderNo ? ` ・ 編號：${escapeHtml(f.orderNo)}` : ''}
+          </div>
+          <div style="background:var(--c-cream); border-radius:8px; padding:8px 10px; margin-top:8px; font-size:12px; color:var(--c-coffee); line-height:1.8">
+            ${(f.items || []).map(i => `${escapeHtml(i.name)}${i.style ? `（${escapeHtml(i.style)}）` : ''} x${i.qty}`).join('<br>') || '（無商品資料）'}
+            <br>聯絡：${escapeHtml(f.cvsName || '-')} ・ ${escapeHtml(f.cvsPhone || '-')}
+            ${f.address ? `<br>地址：${escapeHtml(f.address)}` : ''}
+            ${f.cvsStore || f.cvsStoreName ? `<br>門市：${escapeHtml(f.cvsStoreName || '')} ${escapeHtml(f.cvsStore || '')}` : ''}
+            ${f.errorMessage ? `<br><span style="color:#a33">原因：${escapeHtml(f.errorMessage)}</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0">
+          <button class="btn-icon ${isResolved ? '' : 'active-accent'}" id="resolve-failed-${f.id}" style="font-size:11px; padding:6px 8px">${isResolved ? '改回未處理' : '標記已處理'}</button>
+          <button class="btn-icon danger" id="del-failed-${f.id}" title="刪除此紀錄">${icon('trash', 14)}</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 async function loadAndRenderOrders() {
@@ -88,6 +183,7 @@ async function loadAndRenderOrders() {
 
     // 宅配訂單雖然 orderType 可能是 'cvs'（現貨、不用等小編確認），但取貨方式不是超商取貨，
     // 賣貨便匯出格式也不適用，所以歸到右邊「需透過 LINE 確認」欄位一起處理（因為也需要私訊小編拿匯款帳號）
+    // 注意：舊訂單的 deliveryMethod 可能是 undefined（在新增此欄位之前的訂單），應該當作 'cvs' 對待
     const cvsOrders = orders.filter(o => o.orderType === 'cvs' && o.deliveryMethod !== 'homeDelivery');
     const lineOrders = orders.filter(o => o.orderType !== 'cvs' || o.deliveryMethod === 'homeDelivery');
 

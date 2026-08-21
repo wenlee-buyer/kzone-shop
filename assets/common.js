@@ -452,41 +452,53 @@ async function deductStockForOrder(cartItems) {
       }
     }
 
-    // 先用交易內讀到的「最新」資料完整檢查一輪，任何一項不夠就整筆中止（rollback），
+    // 先把購物車依「商品+款式」加總數量，再拿加總後的數量去比對庫存。
+    // 一定要加總，不能逐行比對：同一個款式有可能在購物車裡變成兩行（例如加購流程把它拆開），
+    // 逐行比對的話「剩2件、兩行各買2件」每行看起來都合法，結果通過檢查後扣成 -2 件，變成超賣。
+    const wantedMap = {};
+    for (const item of cartItems) {
+      if (!productDocs[item.productId]) continue;
+      const key = item.productId + '::' + (item.style || '');
+      if (!wantedMap[key]) {
+        wantedMap[key] = { productId: item.productId, style: item.style || '', name: item.name, qty: 0 };
+      }
+      wantedMap[key].qty += item.qty;
+    }
+    const wantedList = Object.values(wantedMap);
+
+    // 用交易內讀到的「最新」資料完整檢查一輪，任何一項不夠就整筆中止（rollback），
     // 避免同時有多筆結帳時，先前的 validateCartStock 預檢查結果已經過期
     const problems = [];
-    for (const item of cartItems) {
-      const entry = productDocs[item.productId];
-      if (!entry) continue;
-      const data = entry.data;
+    for (const want of wantedList) {
+      const data = productDocs[want.productId].data;
 
       if (data.styles && data.styles.length > 0) {
-        const styleIdx = data.styles.findIndex(s => s.name === item.style);
+        const styleIdx = data.styles.findIndex(s => s.name === want.style);
         if (styleIdx === -1) continue;
         const stock = data.styles[styleIdx].stock;
-        if (stock !== null && stock !== undefined && item.qty > stock) {
-          problems.push(`「${item.name}${item.style ? '（'+item.style+'）' : ''}」庫存剩 ${stock} 件，但訂購了 ${item.qty} 件`);
+        if (stock !== null && stock !== undefined && want.qty > stock) {
+          problems.push(`「${want.name}${want.style ? '（'+want.style+'）' : ''}」庫存剩 ${stock} 件，但訂購了 ${want.qty} 件`);
         }
-      } else if (data.stock !== null && data.stock !== undefined && item.qty > data.stock) {
-        problems.push(`「${item.name}」庫存剩 ${data.stock} 件，但訂購了 ${item.qty} 件`);
+      } else if (data.stock !== null && data.stock !== undefined && want.qty > data.stock) {
+        problems.push(`「${want.name}」庫存剩 ${data.stock} 件，但訂購了 ${want.qty} 件`);
       }
     }
     if (problems.length > 0) {
       throw new StockInsufficientError(problems);
     }
 
-    for (const item of cartItems) {
-      const entry = productDocs[item.productId];
-      if (!entry) continue;
-      const data = entry.data;
+    // 扣庫存也要用同一份「加總後」的清單，跟上面的檢查保持一致。
+    // 如果這裡改回逐行扣，就會跟加總後的檢查結果對不起來（同款式兩行會被扣兩次）。
+    for (const want of wantedList) {
+      const data = productDocs[want.productId].data;
 
       if (data.styles && data.styles.length > 0) {
-        const styleIdx = data.styles.findIndex(s => s.name === item.style);
+        const styleIdx = data.styles.findIndex(s => s.name === want.style);
         if (styleIdx !== -1 && data.styles[styleIdx].stock !== null && data.styles[styleIdx].stock !== undefined) {
-          data.styles[styleIdx].stock = data.styles[styleIdx].stock - item.qty;
+          data.styles[styleIdx].stock = data.styles[styleIdx].stock - want.qty;
         }
       } else if (data.stock !== null && data.stock !== undefined) {
-        data.stock = data.stock - item.qty;
+        data.stock = data.stock - want.qty;
       }
     }
 
@@ -495,6 +507,51 @@ async function deductStockForOrder(cartItems) {
       if (entry) tx.update(entry.ref, { styles: entry.data.styles || [], stock: entry.data.stock ?? null });
     }
   });
+}
+
+// ---- 記錄一筆「結帳失敗」 ----
+// 客人明明有下單動作，卻因為庫存不足或系統異常沒能成立訂單時，要把當下的完整資訊留下來。
+// 沒有這個紀錄的話，店家完全不會知道有人下單失敗（曾經因此漏掉一筆真實訂單，
+// 客人手上有截圖、後台卻查不到任何痕跡，只能靠客人主動反映才發現）。
+// 這個函式本身「絕對不能再往外丟錯誤」，否則會蓋掉原本真正的失敗原因。
+async function logFailedOrder(info) {
+  try {
+    await db.collection(COL.FAILED_ORDERS).add({
+      reason: info.reason || '未知原因',
+      errorName: info.errorName || '',
+      errorMessage: info.errorMessage || '',
+      stage: info.stage || '',
+      // 庫存已經扣掉但訂單沒寫進去的情況，後台需要人工把庫存加回來，所以要特別標記
+      stockAlreadyDeducted: !!info.stockAlreadyDeducted,
+      orderNo: info.orderNo || '',
+      lineName: info.lineName || '',
+      cvsName: info.name || '',
+      cvsPhone: info.phone || '',
+      cvsStore: info.store || '',
+      cvsStoreName: info.storeName || '',
+      address: info.address || '',
+      hasPreorder: !!info.hasPreorder,
+      deliveryMethod: info.hasHomeDelivery ? 'homeDelivery' : 'cvs',
+      items: (info.cart || []).map(i => ({
+        productId: i.productId || '',
+        name: i.name || '',
+        style: i.style || '',
+        price: i.price ?? 0,
+        qty: i.qty ?? 0
+      })),
+      subtotal: info.subtotal ?? 0,
+      discountAmount: info.discount ?? 0,
+      shippingFee: info.shipping ?? 0,
+      total: info.total ?? 0,
+      couponCode: info.couponCode || null,
+      resolved: false, // 店家處理完可以標記，之後就不會一直佔著待處理清單
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (logErr) {
+    // 連失敗紀錄都寫不進去（例如整個 Firestore 連不上），只能印在 console，
+    // 但絕對不能因此再丟一個錯誤出去，蓋掉客人真正遇到的問題
+    console.error('寫入失敗訂單紀錄時也失敗了:', logErr, info);
+  }
 }
 
 // ---- 後台編輯訂單時，依「編輯前」跟「編輯後」的商品內容差異調整庫存 ----
