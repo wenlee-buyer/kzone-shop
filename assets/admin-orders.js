@@ -74,10 +74,24 @@ async function loadAndRenderOrders() {
     const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
     const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
+    console.log(`[訂單診斷] 加載總數：${orders.length} 筆訂單`);
+
+    // 按 orderType 分類，方便診斷
+    const orderTypeCounts = {};
+    orders.forEach(o => {
+      const ot = o.orderType || 'undefined';
+      const dm = o.deliveryMethod || 'undefined';
+      const key = `orderType=${ot}, deliveryMethod=${dm}`;
+      orderTypeCounts[key] = (orderTypeCounts[key] || 0) + 1;
+    });
+    console.log('[訂單診斷] 訂單類型分布：', orderTypeCounts);
+
     // 宅配訂單雖然 orderType 可能是 'cvs'（現貨、不用等小編確認），但取貨方式不是超商取貨，
     // 賣貨便匯出格式也不適用，所以歸到右邊「需透過 LINE 確認」欄位一起處理（因為也需要私訊小編拿匯款帳號）
     const cvsOrders = orders.filter(o => o.orderType === 'cvs' && o.deliveryMethod !== 'homeDelivery');
     const lineOrders = orders.filter(o => o.orderType !== 'cvs' || o.deliveryMethod === 'homeDelivery');
+
+    console.log(`[訂單診斷] 超商現貨：${cvsOrders.length} 筆 / LINE含預購+宅配：${lineOrders.length} 筆`);
 
     renderOrderColumn(cvs, cvsOrders, 'cvs');
     renderOrderColumn(line, lineOrders, 'line');
