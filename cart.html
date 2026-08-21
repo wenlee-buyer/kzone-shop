@@ -274,10 +274,11 @@ function removeItem(idx) {
   render();
 }
 
-async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo, couponInfo) {
+async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo, couponInfo, shippingFee) {
   const canvas = document.getElementById('orderImageCanvas');
   const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const discount = couponInfo?.discount || 0;
+  const shipping = shippingFee || 0;
   const now = new Date();
   const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
@@ -298,7 +299,8 @@ async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingIn
       </div>
     `).join('')}
     ${discount > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name" style="color:var(--c-orange)">優惠碼折抵（${escapeHtml(couponInfo.code)}）</div><div class="oi-price">-${formatPrice(discount)}</div></div>` : ''}
-    <div class="oi-total"><span>商品合計（預購最終金額以小編確認為準）</span><span>${formatPrice(total - discount)}</span></div>
+    ${shipping > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name">運費${shippingInfo?.hasHomeDelivery ? '（宅配）' : ''}</div><div class="oi-price">${formatPrice(shipping)}</div></div>` : ''}
+    <div class="oi-total"><span>${shippingInfo?.hasHomeDelivery ? '應付總額（含運費・請私訊小編匯款）' : '商品合計（預購最終金額以小編確認為準）'}</span><span>${formatPrice(total - discount + shipping)}</span></div>
     <div class="oi-customer">
       ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
       ${shippingInfo?.hasHomeDelivery ? '收件人' : '取件人'}：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
@@ -467,15 +469,18 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
 
     const orderNo = genOrderNo();
 
-    if (hasPreorder) {
-      btn.textContent = '產生圖片中...';
-      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store, address, hasHomeDelivery }, discount > 0 ? { code: appliedCouponCode, discount } : null);
-    }
-
-    // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），
-    // 成功後才寫入訂單，避免「訂單存在但庫存沒扣到」的不一致狀態
+    // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），一定要排在「產生訂單圖片」之前。
+    // 原因：之前是先產生圖片讓客人下載，再檢查/扣庫存，如果這時候才發現庫存不夠，
+    // 客人手上已經拿到一張看起來完全正常的訂單截圖，會以為下單成功、直接把截圖傳給小編，
+    // 但實際上訂單根本沒有寫進後台，導致「客人截圖沒問題，後台卻完全找不到這張單」。
+    // 把扣庫存移到最前面，庫存不夠時客人就不會拿到截圖，才不會被誤導。
     btn.textContent = '確認庫存中...';
     await deductStockForOrder(cart);
+
+    if (hasPreorder) {
+      btn.textContent = '產生圖片中...';
+      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store, address, hasHomeDelivery }, discount > 0 ? { code: appliedCouponCode, discount } : null, shipping);
+    }
 
     const today = new Date();
     const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
