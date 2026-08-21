@@ -469,21 +469,38 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
 
     const orderNo = genOrderNo();
 
-    // 先扣庫存（交易內會再次確認庫存足夠，不夠會 throw 並自動 rollback），一定要排在「產生訂單圖片」之前。
-    // 原因：之前是先產生圖片讓客人下載，再檢查/扣庫存，如果這時候才發現庫存不夠，
-    // 客人手上已經拿到一張看起來完全正常的訂單截圖，會以為下單成功、直接把截圖傳給小編，
-    // 但實際上訂單根本沒有寫進後台，導致「客人截圖沒問題，後台卻完全找不到這張單」。
-    // 把扣庫存移到最前面，庫存不夠時客人就不會拿到截圖，才不會被誤導。
+    const today = new Date();
+    const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+
+    // 流程順序：先扣庫存 → 再產生截圖 → 最後寫訂單。
+    // 客人按下送出就代表確定購買，所以第一件事就是把庫存扣掉，確保不會賣超。
+    // 庫存扣失敗就整筆中止（訂單不寫入、截圖也不產生），但失敗紀錄會被寫進「失敗訂單」集合，
+    // 讓後台看得到「有人下單失敗」，才不會像之前那樣整筆訂單無聲消失、沒人知道。
     btn.textContent = '確認庫存中...';
-    await deductStockForOrder(cart);
+    try {
+      await deductStockForOrder(cart);
+    } catch (stockErr) {
+      // 這裡不管是真的庫存不足，還是連線/程式異常，都要留下紀錄再往外丟，
+      // 讓 catch 區塊統一處理提示，同時後台能查到這筆失敗
+      await logFailedOrder({
+        reason: stockErr.name === 'StockInsufficientError' ? '庫存不足' : '扣庫存時發生錯誤',
+        errorName: stockErr.name || 'UnknownError',
+        errorMessage: stockErr.name === 'StockInsufficientError'
+          ? (stockErr.problems || []).join('；')
+          : (stockErr.message || String(stockErr)),
+        stage: 'deductStock',
+        orderNo, lineName, name, phone, store, storeName, address,
+        hasPreorder, hasHomeDelivery,
+        cart, subtotal, discount, shipping, total,
+        couponCode: appliedCouponCode
+      });
+      throw stockErr;
+    }
 
     if (hasPreorder) {
       btn.textContent = '產生圖片中...';
       await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store, address, hasHomeDelivery }, discount > 0 ? { code: appliedCouponCode, discount } : null, shipping);
     }
-
-    const today = new Date();
-    const orderDateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
 
     btn.textContent = '送出中...';
     await db.collection(COL.ORDERS).add({
@@ -506,6 +523,21 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       total: total,
       orderDate: orderDateStr,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(async (writeErr) => {
+      // 走到這裡代表庫存已經扣掉了，訂單卻沒寫進去——這是最需要人工介入的狀況，
+      // 一定要留下完整紀錄（含已扣掉的商品），後台才知道要把庫存加回去
+      await logFailedOrder({
+        reason: '庫存已扣但訂單寫入失敗（需人工把庫存加回並補單）',
+        errorName: writeErr.name || 'UnknownError',
+        errorMessage: writeErr.message || String(writeErr),
+        stage: 'writeOrder',
+        stockAlreadyDeducted: true,
+        orderNo, lineName, name, phone, store, storeName, address,
+        hasPreorder, hasHomeDelivery,
+        cart, subtotal, discount, shipping, total,
+        couponCode: appliedCouponCode
+      });
+      throw writeErr;
     });
 
     clearCart();

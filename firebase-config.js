@@ -25,7 +25,10 @@ const COL = {
   ORDERS: 'kzone_orders',
   SETTINGS: 'kzone_settings',
   IMPORTED_IDS: 'kzone_imported_ids', // 記錄已從舊系統匯入過的商品 id，避免重複匯入
-  COUPONS: 'kzone_coupons' // 優惠碼（代碼本身當作 doc id，方便直接用代碼查詢）
+  COUPONS: 'kzone_coupons', // 優惠碼（代碼本身當作 doc id，方便直接用代碼查詢）
+  // 結帳失敗紀錄：客人有下單動作但沒能成立訂單時寫在這裡，後台訂單頁最下方會列出來，
+  // 才不會像以前那樣「客人下單失敗，店家完全不知道」（曾經因此漏掉一整筆真實訂單）
+  FAILED_ORDERS: 'kzone_failed_orders'
 };
 
 // ============================================
@@ -233,8 +236,20 @@ async function validateCartStock(cartItems) {
     if (!freshData) continue;
     freshData.styles = normalizeStyles(freshData.styles);
 
+    // 同一個款式可能在購物車裡佔了不只一行，要先把數量加總再比對庫存。
+    // 逐行比對會漏掉超賣：剩2件、兩行各買2件時每行看起來都合法，卻總共要買4件。
+    // 這裡的加總方式必須跟 deductStockForOrder 一致，否則會出現「預檢查放行、真正扣庫存時才失敗」
     const itemsForProduct = cartItems.filter(i => i.productId === pid);
+    const mergedByStyle = {};
     for (const item of itemsForProduct) {
+      const key = item.style || '';
+      if (!mergedByStyle[key]) {
+        mergedByStyle[key] = { name: item.name, style: item.style, qty: 0 };
+      }
+      mergedByStyle[key].qty += item.qty;
+    }
+
+    for (const item of Object.values(mergedByStyle)) {
       if (isStyleSoldOut(freshData, item.style)) {
         problems.push(`「${item.name}${item.style ? '（'+item.style+'）' : ''}」已售完`);
       } else {
