@@ -509,6 +509,94 @@ async function deductStockForOrder(cartItems) {
   });
 }
 
+// ---- 預購採購清單相關 ----
+
+// 每個「商品+款式」在採購進度表裡的固定 doc id。
+// 用固定 id（而不是自動 id + 兩個 where 條件查詢）是為了避免 Firestore 需要額外建立複合索引。
+// 斜線在 Firestore 的 doc id 裡有特殊意義（會被當成路徑分隔），所以要換掉。
+function purchaseDocId(productId, style) {
+  return `${productId}__${(style || '').replace(/\//g, '-')}`;
+}
+
+// 判斷訂單裡的某一項當初是不是以「預購」賣出的。
+// 一律只看下單當下寫進訂單的 stockType 快照，不去查商品現在的設定——
+// 因為商品可能在客人下單之後被改成現貨，那筆訂單的採購需求依然存在，不能因此消失。
+// 舊訂單（沒有這個欄位）退回用訂單層的 orderType 判斷：orderType==='line' 代表這張單含預購。
+function isPreorderOrderItem(order, item) {
+  if (item.stockType === 'preorder') return true;
+  if (item.stockType === 'instock') return false;
+  return order.orderType === 'line';
+}
+
+// 把「還沒出貨的預購訂單」彙總成採購需求清單。
+// 只算未出貨的訂單：按下出貨代表貨已經到、也已經寄出，不該再出現在待採購清單裡。
+// 回傳 [{ key, productId, style, name, needed, orders:[{orderNo, lineName, qty}] }]，依需求量多的排前面
+function buildPurchaseDemand(orders) {
+  const map = {};
+  for (const order of orders) {
+    if (order.shippedAt) continue;
+    for (const item of (order.items || [])) {
+      if (!isPreorderOrderItem(order, item)) continue;
+      const key = purchaseDocId(item.productId, item.style);
+      if (!map[key]) {
+        map[key] = {
+          key,
+          productId: item.productId,
+          style: item.style || '',
+          name: item.name || '',
+          needed: 0,
+          orders: []
+        };
+      }
+      map[key].needed += (item.qty || 0);
+      map[key].orders.push({
+        orderNo: order.orderNo || '',
+        lineName: order.lineName || '',
+        qty: item.qty || 0
+      });
+    }
+  }
+  return Object.values(map).sort((a, b) => b.needed - a.needed || a.name.localeCompare(b.name));
+}
+
+// 出貨/取消出貨時，同步調整「已採購數量」。
+// 為什麼要調整：需求量會因為訂單出貨而自動減少，如果已採購數量不跟著減，
+// 帳面就會變成「需求7、已採購10」這種看起來多買了3件的假訊息。
+// delta 為負數代表要扣掉（出貨），正數代表要加回來（取消出貨標記）。
+// 扣的時候夾在 0 以上，避免出現負數的已採購量。
+async function adjustPurchasedForOrder(order, direction) {
+  const items = (order.items || []).filter(item => isPreorderOrderItem(order, item));
+  if (items.length === 0) return;
+
+  // 同一個款式在訂單裡可能拆成多行，先加總再一次調整，避免同一份文件被重複讀寫
+  const merged = {};
+  for (const item of items) {
+    const key = purchaseDocId(item.productId, item.style);
+    if (!merged[key]) merged[key] = { productId: item.productId, style: item.style || '', qty: 0 };
+    merged[key].qty += (item.qty || 0);
+  }
+
+  for (const [key, info] of Object.entries(merged)) {
+    const ref = db.collection(COL.PURCHASES).doc(key);
+    try {
+      await db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const current = doc.exists ? (doc.data().purchased || 0) : 0;
+        const next = Math.max(0, current + (direction * info.qty));
+        tx.set(ref, {
+          productId: info.productId,
+          style: info.style,
+          purchased: next,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
+    } catch (e) {
+      // 採購進度只是輔助帳，調整失敗不該讓出貨動作整個失敗（出貨本身才是重點）
+      console.error('調整已採購數量失敗，請至採購清單手動核對:', key, e);
+    }
+  }
+}
+
 // ---- 記錄一筆「結帳失敗」 ----
 // 客人明明有下單動作，卻因為庫存不足或系統異常沒能成立訂單時，要把當下的完整資訊留下來。
 // 沒有這個紀錄的話，店家完全不會知道有人下單失敗（曾經因此漏掉一筆真實訂單，

@@ -246,6 +246,7 @@ function renderOrderColumn(container, orders, colType) {
     document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
     document.getElementById(`edit-order-${order.id}`)?.addEventListener('click', () => openEditOrderModal(order));
     document.getElementById(`payment-order-${order.id}`)?.addEventListener('click', () => togglePaymentConfirmed(order));
+    document.getElementById(`merge-order-${order.id}`)?.addEventListener('click', () => openMergeOrderModal(order));
     document.getElementById(`toggle-order-${order.id}`)?.addEventListener('click', () => {
       const detail = document.getElementById(`detail-order-${order.id}`);
       detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
@@ -344,6 +345,7 @@ function renderOrderCard(order) {
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
           ${isHomeDelivery ? `<button class="btn-icon ${isPaymentConfirmed ? '' : 'active-accent'}" id="payment-order-${order.id}" title="${isPaymentConfirmed ? '取消已匯款標記' : '標記已匯款'}" style="font-size:11px; padding:6px 8px">${isPaymentConfirmed ? '取消已匯款' : '標記已匯款'}</button>` : ''}
+          ${!isShipped ? `<button class="btn-icon" id="merge-order-${order.id}" title="把其他訂單併進這張（這張的編號會保留）" style="font-size:11px; padding:6px 8px">併單</button>` : ''}
           ${!isShipped ? `<button class="btn-icon" id="edit-order-${order.id}" title="編輯商品/金額" style="font-size:11px; padding:6px 8px">編輯</button>` : ''}
           <button class="btn-icon ${isShipped ? '' : 'active-accent'}" id="ship-order-${order.id}" title="${isShipped ? '修改出貨資訊' : '標記出貨'}" style="font-size:11px; padding:6px 8px">
             ${isShipped ? '修改出貨' : '標記出貨'}
@@ -429,9 +431,13 @@ function openShipModal(order) {
       shippedAt: firebase.firestore.FieldValue.delete(),
       trackingNo: firebase.firestore.FieldValue.delete()
     });
+    // 取消出貨代表這筆訂單重新回到待處理，採購需求也會跟著回來，
+    // 所以先前出貨時扣掉的已採購數量要加回去，帳面才不會變成「需求10、已採購0」
+    await adjustPurchasedForOrder(order, +1);
     close();
     showToast('已取消出貨標記');
     loadAndRenderOrders();
+    loadAndRenderFailedOrders();
   });
 
   // 確認出貨
@@ -451,6 +457,11 @@ function openShipModal(order) {
       else updateData.trackingNo = firebase.firestore.FieldValue.delete();
 
       await db.collection(COL.ORDERS).doc(order.id).update(updateData);
+      // 第一次標記出貨時，把這筆訂單的預購商品從採購清單扣掉（需求量會因為 shippedAt 自動消失，
+      // 已採購數量要在這裡主動扣）。如果本來就已經是出貨狀態（只是改日期或單號），不能重複扣。
+      if (!isShipped) {
+        await adjustPurchasedForOrder(order, -1);
+      }
       close();
       showToast('出貨資訊已儲存');
       loadAndRenderOrders();
@@ -571,6 +582,10 @@ function renderEditOrderItems() {
       <div style="flex:1; min-width:0">
         <div style="font-size:12px; font-weight:700; color:var(--c-coffee)">${escapeHtml(item.name)}${item.style ? `<span style="color:var(--c-rose-text); font-weight:400"> (${escapeHtml(item.style)})</span>` : ''}</div>
         <div style="font-size:11px; color:var(--c-rose-text)">${formatPrice(item.price)} / 件</div>
+        <div style="display:flex; gap:4px; margin-top:4px">
+          <button class="chip ${isPreorderOrderItem(editOrderState.order, item) ? '' : 'selected'}" data-eo-type="${i}" data-type="instock" type="button" style="font-size:10px; padding:2px 8px">現貨</button>
+          <button class="chip ${isPreorderOrderItem(editOrderState.order, item) ? 'selected' : ''}" data-eo-type="${i}" data-type="preorder" type="button" style="font-size:10px; padding:2px 8px">預購</button>
+        </div>
       </div>
       <div style="display:flex; align-items:center; gap:6px">
         <button class="ci-qbtn" data-eo-qty-minus="${i}" type="button">−</button>
@@ -582,6 +597,17 @@ function renderEditOrderItems() {
     </div>
   `).join('');
 
+  // 現貨/預購切換：客人下單時是現貨，但你發現其實要跟賣家調貨時可以改成預購，
+  // 改完這一項就會出現在「預購採購單」裡。這裡只改狀態，不會動到庫存
+  //（扣庫存看的是「該款式有沒有設庫存上限」，跟現貨/預購無關）
+  list.querySelectorAll('[data-eo-type]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.eoType);
+      editOrderState.items[i].stockType = btn.dataset.type;
+      renderEditOrderItems();
+      updateEditOrderSummary();
+    });
+  });
   list.querySelectorAll('[data-eo-qty-minus]').forEach(btn => {
     btn.addEventListener('click', () => {
       const i = parseInt(btn.dataset.eoQtyMinus);
@@ -791,9 +817,27 @@ async function saveEditedOrder() {
     const couponDiscount = order.discountAmount || 0;
     const total = Math.max(0, subtotal - couponDiscount - manualDiscount) + shippingFee;
 
+    // 存檔前先把每一項的現貨/預購狀態「明確寫死」，不能留空讓它之後去看訂單層的 orderType。
+    // 這一步非常重要，少了會造成實際的採購錯誤：
+    // 舊訂單的商品項可能沒有 stockType 欄位，判斷時會退回看訂單層 orderType。
+    // 假設一張舊訂單有兩項，你只把其中一項改成預購 → 整張單變成 line →
+    // 另一項沒被改的現貨商品因為自己沒有 stockType，也會被當成預購，
+    // 於是採購單上會多出一筆你根本不需要採買的商品，害你多買貨。
+    const normalizedItems = editOrderState.items.map(item => ({
+      ...item,
+      stockType: isPreorderOrderItem(order, item) ? 'preorder' : 'instock'
+    }));
+
+    // 訂單裡只要有任何一項是預購，整張單就算「含預購」，會搬到右邊欄位、
+    // 也不會被匯出到賣貨便檔案（避免把還在等貨的單當成現貨去出貨）。
+    // 全部都改成現貨時，訂單會搬回左邊的超商現貨欄位
+    const anyPreorder = normalizedItems.some(item => item.stockType === 'preorder');
+    const newOrderType = anyPreorder ? 'line' : 'cvs';
+
     btn.textContent = '儲存中...';
     await db.collection(COL.ORDERS).doc(order.id).update({
-      items: editOrderState.items,
+      items: normalizedItems,
+      orderType: newOrderType,
       subtotal,
       manualDiscount,
       shippingFee,
@@ -820,6 +864,268 @@ async function saveEditedOrder() {
     }
     btn.disabled = false;
     btn.textContent = '儲存變更';
+  }
+}
+
+// ============================================
+// 併單：連線時客人常常分次下單，事後要合併成一張出貨
+// 規則：被點到「併單」的那張是主訂單（保留它的編號與收件資料），其他被選到的訂單併進來後刪除。
+// 運費會依合併後的總額重新計算（客人只付一次運費，這也是併單的意義）。
+// 庫存不需要調整：商品只是從一張訂單移到另一張，兩邊結帳時都已經各自扣過庫存了。
+// ============================================
+
+// 把多張訂單的商品合併成一份清單。
+// 同一個「商品+款式+單價」會被加總成一行，避免出貨時看到同一款東西分散在好幾行。
+// 單價也要當成分組條件之一：同款商品若在不同時間下單、價格被改過，合併後仍要分開計價，
+// 不然總金額會算錯（少收或多收客人的錢）。
+function mergeOrderItems(orderList) {
+  const map = {};
+  const result = [];
+  for (const order of orderList) {
+    for (const item of (order.items || [])) {
+      const isPre = isPreorderOrderItem(order, item);
+      const key = [item.productId, item.style || '', item.price].join('::');
+      if (map[key]) {
+        map[key].qty += (item.qty || 0);
+        // 同款商品其中一筆是預購時，合併後整項都要當預購處理（比較保守，避免還沒到貨就被出貨）
+        if (isPre) map[key].stockType = 'preorder';
+      } else {
+        map[key] = {
+          ...item,
+          qty: item.qty || 0,
+          // 把當下判斷出來的預購狀態固定寫進去，之後就不會再受訂單層 orderType 影響
+          stockType: isPre ? 'preorder' : 'instock'
+        };
+        result.push(map[key]);
+      }
+    }
+  }
+  return result;
+}
+
+// 找出主訂單跟要併進來的訂單之間，有哪些資料不一致需要提醒店家
+function findMergeConflicts(primary, others) {
+  const conflicts = [];
+  const pDelivery = primary.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs';
+  for (const o of others) {
+    const oDelivery = o.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs';
+    const label = o.orderNo || o.lineName || '(無編號)';
+    if (oDelivery !== pDelivery) {
+      conflicts.push(`${label}：取貨方式不同（${oDelivery === 'homeDelivery' ? '宅配' : '超商'}），合併後會一律用主訂單的方式`);
+    }
+    if ((o.cvsName || '') !== (primary.cvsName || '')) {
+      conflicts.push(`${label}：收件人不同（${o.cvsName || '未填'}）`);
+    }
+    if ((o.cvsPhone || '') !== (primary.cvsPhone || '')) {
+      conflicts.push(`${label}：手機不同（${o.cvsPhone || '未填'}）`);
+    }
+    if (pDelivery === 'homeDelivery' && (o.address || '') !== (primary.address || '')) {
+      conflicts.push(`${label}：地址不同（${o.address || '未填'}）`);
+    }
+    if (pDelivery === 'cvs' && (o.cvsStore || '') !== (primary.cvsStore || '')) {
+      conflicts.push(`${label}：取貨門市不同（${o.cvsStoreName || ''} ${o.cvsStore || '未填'}）`);
+    }
+  }
+  return conflicts;
+}
+
+// 算出合併後的各項金額。抽成獨立函式方便驗證，也讓「預覽」跟「實際儲存」用同一套算法，
+// 避免預覽金額跟存進資料庫的金額不一致
+function calcMergedTotals(primary, others) {
+  const all = [primary, ...others];
+  const items = mergeOrderItems(all);
+  const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+  // 折扣類的金額一律相加：客人各張單用掉的優惠不該因為併單而消失
+  const discountAmount = all.reduce((s, o) => s + (o.discountAmount || 0), 0);
+  const manualDiscount = all.reduce((s, o) => s + (o.manualDiscount || 0), 0);
+  const depositReceived = all.reduce((s, o) => s + (o.depositReceived || 0), 0);
+  const hasHomeDelivery = primary.deliveryMethod === 'homeDelivery';
+  // 運費依合併後的商品總額重算（滿額免運要用合併後的金額判斷，客人才享得到）
+  const shippingFee = calcShippingFee(Math.max(0, subtotal - discountAmount - manualDiscount), hasHomeDelivery);
+  const total = Math.max(0, subtotal - discountAmount - manualDiscount) + shippingFee;
+  const couponCodes = all.map(o => o.couponCode).filter(Boolean);
+  return {
+    items, subtotal, discountAmount, manualDiscount, depositReceived,
+    shippingFee, total,
+    couponCode: couponCodes.length > 0 ? [...new Set(couponCodes)].join('+') : null,
+    anyPreorder: items.some(i => i.stockType === 'preorder')
+  };
+}
+
+let mergeState = { primary: null, candidates: [], selected: new Set() };
+
+async function openMergeOrderModal(primary) {
+  mergeState = { primary, candidates: [], selected: new Set() };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'mergeOrderModalOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:560px">
+      <div class="modal-header">
+        <span class="modal-title">併單到 ${escapeHtml(primary.orderNo || '這張訂單')}</span>
+        <button class="modal-close" id="closeMergeModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:var(--c-coffee); line-height:1.7">
+          主訂單：<strong>${escapeHtml(primary.lineName || '未提供')}</strong>${primary.orderNo ? `（${escapeHtml(primary.orderNo)}）` : ''}<br>
+          勾選要併進來的訂單，合併後會保留這張的編號與收件資料，被併的訂單會被刪除。
+        </div>
+        <div id="mergeCandidateList"><div class="loading-wrap"><div class="spin"></div>載入可併訂單...</div></div>
+        <div id="mergePreview"></div>
+        <button class="btn-primary" id="confirmMergeBtn" style="margin-top:10px" disabled>請先勾選要併入的訂單</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  document.getElementById('closeMergeModal').addEventListener('click', close);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+  document.getElementById('confirmMergeBtn').addEventListener('click', doMergeOrders);
+
+  try {
+    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
+    // 只列出「未出貨」而且不是自己的訂單。已出貨的不能併（貨都寄出去了），
+    // 同一個客人的通常排在前面，但不強制只顯示同名，因為 LINE 名稱常常對不上本人
+    mergeState.candidates = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(o => o.id !== mergeState.primary.id && !o.shippedAt);
+    renderMergeCandidates();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('mergeCandidateList').innerHTML =
+      `<div class="empty-state">${icon('alert-circle', 18)}載入訂單失敗</div>`;
+  }
+}
+
+function renderMergeCandidates() {
+  const list = document.getElementById('mergeCandidateList');
+  const primary = mergeState.primary;
+  if (mergeState.candidates.length === 0) {
+    list.innerHTML = `<div class="empty-state" style="padding:20px 10px">${icon('clipboard-off', 18)}<p style="margin-top:8px">沒有其他可以併入的未出貨訂單</p></div>`;
+    return;
+  }
+
+  // 同一個 LINE 名稱的排前面，方便你一眼找到同一位客人分開下的單
+  const sorted = [...mergeState.candidates].sort((a, b) => {
+    const aSame = (a.lineName || '') === (primary.lineName || '') ? 0 : 1;
+    const bSame = (b.lineName || '') === (primary.lineName || '') ? 0 : 1;
+    return aSame - bSame;
+  });
+
+  list.innerHTML = sorted.map(o => {
+    const sameName = (o.lineName || '') === (primary.lineName || '');
+    const itemCount = (o.items || []).reduce((s, i) => s + (i.qty || 0), 0);
+    return `
+      <label style="display:flex; align-items:flex-start; gap:8px; padding:8px 10px; border:1px solid ${sameName ? 'var(--c-orange)' : 'var(--c-blush)'}; border-radius:8px; margin-bottom:6px; cursor:pointer; background:#fff">
+        <input type="checkbox" data-merge-pick="${o.id}" ${mergeState.selected.has(o.id) ? 'checked' : ''} style="margin-top:2px">
+        <div style="flex:1; min-width:0; font-size:12px; color:var(--c-coffee); line-height:1.6">
+          <strong>${escapeHtml(o.lineName || '未提供')}</strong>${sameName ? '<span style="color:var(--c-orange); font-size:10px"> ・同一位客人</span>' : ''}
+          ${o.orderNo ? `<span style="color:var(--c-rose-text)"> ・${escapeHtml(o.orderNo)}</span>` : ''}<br>
+          <span style="color:var(--c-rose-text); font-size:11px">
+            共${itemCount}件 ・ ${formatPrice(o.total || 0)} ・ ${o.deliveryMethod === 'homeDelivery' ? '宅配' : '超商'}
+          </span><br>
+          <span style="font-size:11px">${(o.items || []).map(i => `${escapeHtml(i.name)}${i.style ? `（${escapeHtml(i.style)}）` : ''} x${i.qty}`).join('、')}</span>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-merge-pick]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.mergePick;
+      if (cb.checked) mergeState.selected.add(id);
+      else mergeState.selected.delete(id);
+      renderMergePreview();
+    });
+  });
+  renderMergePreview();
+}
+
+function renderMergePreview() {
+  const box = document.getElementById('mergePreview');
+  const btn = document.getElementById('confirmMergeBtn');
+  const others = mergeState.candidates.filter(o => mergeState.selected.has(o.id));
+
+  if (others.length === 0) {
+    box.innerHTML = '';
+    btn.disabled = true;
+    btn.textContent = '請先勾選要併入的訂單';
+    return;
+  }
+
+  const t = calcMergedTotals(mergeState.primary, others);
+  const conflicts = findMergeConflicts(mergeState.primary, others);
+
+  box.innerHTML = `
+    <div style="background:var(--c-cream); border-radius:8px; padding:12px; margin-top:12px; font-size:12px; color:var(--c-coffee); line-height:1.9">
+      <div style="font-weight:700; margin-bottom:6px">合併後預覽（共 ${others.length + 1} 張單）</div>
+      ${t.items.map(i => `${escapeHtml(i.name)}${i.style ? `（${escapeHtml(i.style)}）` : ''} x${i.qty}${i.stockType === 'preorder' ? '　<span style="color:var(--c-orange)">預購</span>' : ''}`).join('<br>')}
+      <div style="border-top:0.5px solid var(--c-rose); margin:8px 0 6px"></div>
+      商品小計：${formatPrice(t.subtotal)}<br>
+      ${t.discountAmount > 0 ? `優惠碼折抵：-${formatPrice(t.discountAmount)}<br>` : ''}
+      ${t.manualDiscount > 0 ? `額外折抵：-${formatPrice(t.manualDiscount)}<br>` : ''}
+      運費（依合併後金額重算）：${t.shippingFee === 0 ? '免運' : formatPrice(t.shippingFee)}<br>
+      <strong>應付總額：${formatPrice(t.total)}</strong>
+      ${t.depositReceived > 0 ? `<br>已收訂金合計：${formatPrice(t.depositReceived)}` : ''}
+    </div>
+    ${conflicts.length > 0 ? `
+      <div style="background:#fff8f5; border:1px solid #f0c9c9; border-radius:8px; padding:10px 12px; margin-top:8px; font-size:11px; color:#a33; line-height:1.8">
+        ${icon('alert-circle', 14)} <strong>資料不一致，請確認後再併：</strong><br>
+        ${conflicts.map(c => `・${escapeHtml(c)}`).join('<br>')}
+      </div>
+    ` : ''}
+  `;
+  btn.disabled = false;
+  btn.textContent = `確認併單（併入 ${others.length} 張）`;
+}
+
+async function doMergeOrders() {
+  const primary = mergeState.primary;
+  const others = mergeState.candidates.filter(o => mergeState.selected.has(o.id));
+  if (others.length === 0) return;
+
+  const orderNos = others.map(o => o.orderNo || '(無編號)').join('、');
+  if (!confirm(`確定要把 ${orderNos} 併入 ${primary.orderNo || '這張訂單'} 嗎？\n\n被併入的訂單會被刪除，此動作無法復原。`)) return;
+
+  const btn = document.getElementById('confirmMergeBtn');
+  btn.disabled = true;
+  btn.textContent = '併單中...';
+
+  try {
+    const t = calcMergedTotals(primary, others);
+
+    // 先更新主訂單，成功之後才刪除被併的訂單。
+    // 順序很重要：萬一更新失敗，被併的訂單還在，資料不會憑空消失（頂多是併單沒生效，可以重試）
+    await db.collection(COL.ORDERS).doc(primary.id).update({
+      items: t.items,
+      orderType: t.anyPreorder ? 'line' : 'cvs',
+      subtotal: t.subtotal,
+      discountAmount: t.discountAmount,
+      manualDiscount: t.manualDiscount,
+      depositReceived: t.depositReceived,
+      shippingFee: t.shippingFee,
+      total: t.total,
+      couponCode: t.couponCode,
+      // 留下併單痕跡，日後客人拿舊編號來問時查得到去向
+      mergedFrom: others.map(o => o.orderNo || o.id),
+      mergedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      lastEditedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    for (const o of others) {
+      await db.collection(COL.ORDERS).doc(o.id).delete();
+    }
+
+    document.getElementById('mergeOrderModalOverlay')?.remove();
+    showToast(`已併單，保留編號 ${primary.orderNo || ''}`);
+    loadAndRenderOrders();
+  } catch (err) {
+    console.error('併單失敗:', err);
+    showToast('併單失敗，請稍後再試（被併的訂單仍保留）');
+    btn.disabled = false;
+    btn.textContent = `確認併單（併入 ${others.length} 張）`;
   }
 }
 
