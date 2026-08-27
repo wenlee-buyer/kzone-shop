@@ -249,10 +249,6 @@ function renderPurchasingList() {
       // 直接把數量和輸入框放在商品那一行就好
       const singleNoStyle = p.styles.length === 1 && !p.styles[0].style;
 
-      const otherCatHtml = p.otherCategoryNames.length > 0
-        ? `<div style="font-size:10px; color:var(--c-rose-text); margin-top:2px">也屬於 ${p.otherCategoryNames.map(escapeHtml).join('、')}</div>`
-        : '';
-
       if (singleNoStyle) {
         const d = p.styles[0];
         const purchased = pMap[d.key] || 0;
@@ -266,7 +262,6 @@ function renderPurchasingList() {
               </div>
               ${rightSide(d, purchased)}
             </div>
-            ${otherCatHtml}
           </div>
         `;
       }
@@ -291,7 +286,6 @@ function renderPurchasingList() {
             <span style="font-size:16px; font-weight:700; color:var(--c-coffee); ${allDone ? 'opacity:0.5' : ''}">${escapeHtml(p.name)}</span>
             ${allDone ? `<span style="color:#1a5c2a; opacity:0.7">${icon('check', 15)}</span>` : ''}
           </div>
-          ${otherCatHtml}
           <div style="margin-top:4px">
             ${sortedStyles.map(d => styleRow(d)).join('')}
           </div>
