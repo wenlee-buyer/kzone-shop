@@ -492,6 +492,26 @@ function openEditOrderModal(order) {
         </div>
 
         <div class="field">
+          <label class="field-label">
+            ${order.deliveryMethod === 'homeDelivery' ? '收件資訊（宅配）' : '取貨資訊（超商）'}
+            <span style="font-weight:400; color:var(--c-rose-text)">・客人下單後改地址/電話時直接在這裡改</span>
+          </label>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+            <input type="text" id="eo_cvsName" value="${escapeHtml(order.cvsName || '')}" placeholder="${order.deliveryMethod === 'homeDelivery' ? '收件人姓名' : '取件人姓名'}">
+            <input type="text" id="eo_cvsPhone" value="${escapeHtml(order.cvsPhone || '')}" placeholder="手機號碼">
+          </div>
+          ${order.deliveryMethod === 'homeDelivery' ? `
+            <input type="text" id="eo_address" value="${escapeHtml(order.address || '')}" placeholder="收件地址" style="margin-top:8px">
+          ` : `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px">
+              <input type="text" id="eo_cvsStoreName" value="${escapeHtml(order.cvsStoreName || '')}" placeholder="取件門市名稱">
+              <input type="text" id="eo_cvsStore" value="${escapeHtml(order.cvsStore || '')}" placeholder="門市店號">
+            </div>
+          `}
+          <input type="text" id="eo_lineName" value="${escapeHtml(order.lineName || '')}" placeholder="客人 LINE 名稱" style="margin-top:8px">
+        </div>
+
+        <div class="field">
           <label class="field-label">訂單商品</label>
           <div id="editOrderItemsList"></div>
           <button class="btn-secondary" id="addOrderItemBtn" style="margin-top:6px">+ 新增商品</button>
@@ -738,6 +758,27 @@ async function saveEditedOrder() {
     return;
   }
 
+  // 收件/取貨資訊：客人下單後常常會改地址或電話，這裡要能直接改。
+  // 宅配訂單有地址、沒有門市；超商訂單有門市、沒有地址，所以對應的輸入框只會出現一種，
+  // 讀取時用 ?. 保護，抓不到的那一邊就沿用原本的值，不要不小心把它清成空字串
+  const isHomeDeliveryOrder = order.deliveryMethod === 'homeDelivery';
+  const newCvsName = document.getElementById('eo_cvsName').value.trim();
+  const newCvsPhone = document.getElementById('eo_cvsPhone').value.trim();
+  const newLineName = document.getElementById('eo_lineName').value.trim();
+  const newAddress = isHomeDeliveryOrder
+    ? (document.getElementById('eo_address')?.value.trim() ?? '')
+    : (order.address || '');
+  const newCvsStoreName = isHomeDeliveryOrder
+    ? (order.cvsStoreName || '')
+    : (document.getElementById('eo_cvsStoreName')?.value.trim() ?? '');
+  const newCvsStore = isHomeDeliveryOrder
+    ? (order.cvsStore || '')
+    : (document.getElementById('eo_cvsStore')?.value.trim() ?? '');
+
+  if (!newCvsName) { showToast(isHomeDeliveryOrder ? '請填寫收件人姓名' : '請填寫取件人姓名'); return; }
+  if (!newCvsPhone) { showToast('請填寫手機號碼'); return; }
+  if (isHomeDeliveryOrder && !newAddress) { showToast('宅配訂單請填寫收件地址'); return; }
+
   const btn = document.getElementById('saveEditOrderBtn');
   btn.disabled = true;
   btn.textContent = '調整庫存中...';
@@ -758,6 +799,12 @@ async function saveEditedOrder() {
       shippingFee,
       depositReceived,
       total,
+      lineName: newLineName,
+      cvsName: newCvsName,
+      cvsPhone: newCvsPhone,
+      cvsStoreName: newCvsStoreName,
+      cvsStore: newCvsStore,
+      address: newAddress,
       lastEditedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
