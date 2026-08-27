@@ -195,43 +195,46 @@ function renderPurchasingList() {
   const pMap = purchasingState.purchasedMap;
   const groups = groupDemandByCategory(demand, purchasingState.productMap, appState.categories);
 
-  // 「還缺」的文字。這是採購時真正要看的數字，所以字要大、顏色要明顯。
-  // 還缺 > 0 用橘色強調（要再去買）；剛好買齊用綠色；買超過需求用紅色提醒（可能重複下單了）
-  const shortageText = (shortage, size) => {
+  // 名稱後面那個「×N」就是「還要買幾個」，不是需求量。
+  // 這是採購現場真正要看的數字，所以放在名稱旁邊、字大、橘色。
+  // 需求量不放這裡（會跟缺少量兩個數字打架），移到右邊跟已採購放在一起當參考。
+  const needBadge = (needed, purchased, size) => {
+    const shortage = needed - purchased;
     if (shortage > 0) {
-      return `<span style="color:var(--c-orange); font-weight:700; font-size:${size}px">還缺 ${shortage}</span>`;
+      return `<span style="color:var(--c-orange); font-weight:700; font-size:${size}px">×${shortage}</span>`;
     }
     if (shortage === 0) {
-      return `<span style="color:#1a5c2a; font-weight:700; font-size:${size}px">${icon('check', size)} 已買齊</span>`;
+      return `<span style="color:#1a5c2a; font-weight:700; font-size:${size}px">${icon('check', size)}</span>`;
     }
-    return `<span style="color:#a33; font-weight:700; font-size:${size}px">多買 ${Math.abs(shortage)}</span>`;
+    return `<span style="color:#a33; font-weight:700; font-size:${size}px">多買 ${-shortage}</span>`;
   };
 
-  // 單一款式的那一列。
-  // 版面刻意做成「左邊看名稱和還缺、右邊才是統計和輸入」：
-  // 採買現場是一手拿手機一手挑貨，最需要一眼掃到「這個要買幾個」，
-  // 所以款式名稱和還缺數量放最左邊並排、字級加大，需求量和輸入框往右靠
-  const styleRow = (d, showStyleName) => {
+  // 右側的參考資訊：需求量與已採購輸入框。
+  // 用固定寬度讓每一列的數字垂直對齊，一整排掃下來比較好讀
+  const rightSide = (d, purchased) => `
+    <div style="flex-shrink:0; display:flex; align-items:center; gap:8px">
+      <span style="font-size:11px; color:var(--c-rose-text); width:44px; text-align:right">需求 ${d.needed}</span>
+      <span style="font-size:11px; color:var(--c-rose-text)">已採購</span>
+      <input type="number" min="0" value="${purchased}" data-purchased="${escapeHtml(d.key)}"
+        style="width:56px; text-align:center; border:0.5px solid var(--c-rose); border-radius:6px; padding:4px">
+    </div>
+  `;
+
+  // 款式那一列。字級刻意比商品名小一號、不加粗，這樣一眼就分得出哪個是商品哪個是款式。
+  // 已經買齊的整列淡化處理，讓還要買的東西在視覺上跳出來
+  const styleRow = (d) => {
     const purchased = pMap[d.key] || 0;
-    const shortage = d.needed - purchased;
+    const done = purchased >= d.needed;
 
     return `
-      <div style="display:flex; align-items:center; gap:10px; padding:8px 0 8px 12px; border-top:0.5px solid var(--c-blush)">
-        <div style="flex:1; min-width:0; display:flex; align-items:center; gap:10px; flex-wrap:wrap">
-          <span style="font-size:15px; font-weight:700; color:var(--c-coffee)">
-            ${showStyleName ? escapeHtml(d.style || '（不挑款）') : '數量'}
+      <div style="display:flex; align-items:center; gap:10px; padding:5px 0 5px 14px; ${done ? 'opacity:0.5' : ''}">
+        <div style="flex:1; min-width:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+          <span style="font-size:13px; color:var(--c-coffee)">
+            <span style="color:var(--c-rose)">└</span> ${escapeHtml(d.style || '不挑款')}
           </span>
-          ${shortageText(shortage, 15)}
+          ${needBadge(d.needed, purchased, 14)}
         </div>
-        <div style="flex-shrink:0; display:flex; align-items:center; gap:10px">
-          <span style="font-size:11px; color:var(--c-rose-text); text-align:right">
-            需求 <strong style="font-size:13px; color:var(--c-coffee)">${d.needed}</strong><br>
-            ${d.orders.length} 筆訂單
-          </span>
-          <span style="font-size:11px; color:var(--c-rose-text)">已採購</span>
-          <input type="number" min="0" value="${purchased}" data-purchased="${escapeHtml(d.key)}"
-            style="width:64px; text-align:center; border:0.5px solid var(--c-rose); border-radius:6px; padding:5px">
-        </div>
+        ${rightSide(d, purchased)}
       </div>
     `;
   };
@@ -242,22 +245,56 @@ function renderPurchasingList() {
     const isOpen = purchasingState.expanded.has(g.catId);
 
     const productsHtml = g.products.map(p => {
-      const pSum = sumStyles(p.styles, pMap);
-      // 只有一個款式而且款式名稱是空的（不挑款商品）時，不用再多一層款式名稱
+      // 只有一個款式、而且那個款式沒有名字（不挑款商品）時，不用多一層 └ 的縮排，
+      // 直接把數量和輸入框放在商品那一行就好
       const singleNoStyle = p.styles.length === 1 && !p.styles[0].style;
-      return `
-        <div style="border:1px solid var(--c-blush); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fff">
-          <div style="display:flex; align-items:center; gap:10px">
-            <div style="flex:1; min-width:0; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
-              <span style="font-size:17px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name)}</span>
-              ${shortageText(pSum.shortage, 17)}
+
+      const otherCatHtml = p.otherCategoryNames.length > 0
+        ? `<div style="font-size:10px; color:var(--c-rose-text); margin-top:2px">也屬於 ${p.otherCategoryNames.map(escapeHtml).join('、')}</div>`
+        : '';
+
+      if (singleNoStyle) {
+        const d = p.styles[0];
+        const purchased = pMap[d.key] || 0;
+        const done = purchased >= d.needed;
+        return `
+          <div style="border:1px solid var(--c-blush); border-radius:10px; padding:12px 14px; margin-bottom:8px; background:#fff; ${done ? 'opacity:0.5' : ''}">
+            <div style="display:flex; align-items:center; gap:10px">
+              <div style="flex:1; min-width:0; display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+                <span style="font-size:16px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name)}</span>
+                ${needBadge(d.needed, purchased, 17)}
+              </div>
+              ${rightSide(d, purchased)}
             </div>
-            <div style="flex-shrink:0; font-size:11px; color:var(--c-rose-text); text-align:right">
-              ${p.styles.length > 1 ? `${p.styles.length} 個款式・合計 ${pSum.needed} 件` : `需求 ${pSum.needed} 件`}
-              ${p.otherCategoryNames.length > 0 ? `<br>也屬於 ${p.otherCategoryNames.map(escapeHtml).join('、')}` : ''}
-            </div>
+            ${otherCatHtml}
           </div>
-          ${p.styles.map(d => styleRow(d, !singleNoStyle)).join('')}
+        `;
+      }
+
+      // 有款式的商品：商品名只當標題，不顯示合計數量或合計缺少量
+      //（採買時是照款式逐一買的，多一個合計反而會看混）
+      // 已經買齊的款式排到最下面，還要買的集中在上面，採購時視線不用跳過已完成的
+      const sortedStyles = [...p.styles].sort((a, b) => {
+        const aDone = (pMap[a.key] || 0) >= a.needed ? 1 : 0;
+        const bDone = (pMap[b.key] || 0) >= b.needed ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        // 都還沒買齊時，缺得多的排前面
+        const aLeft = a.needed - (pMap[a.key] || 0);
+        const bLeft = b.needed - (pMap[b.key] || 0);
+        return bLeft - aLeft;
+      });
+      const allDone = sortedStyles.every(d => (pMap[d.key] || 0) >= d.needed);
+
+      return `
+        <div style="border:1px solid var(--c-blush); border-radius:10px; padding:12px 14px; margin-bottom:8px; background:#fff">
+          <div style="display:flex; align-items:center; gap:8px">
+            <span style="font-size:16px; font-weight:700; color:var(--c-coffee); ${allDone ? 'opacity:0.5' : ''}">${escapeHtml(p.name)}</span>
+            ${allDone ? `<span style="color:#1a5c2a; opacity:0.7">${icon('check', 15)}</span>` : ''}
+          </div>
+          ${otherCatHtml}
+          <div style="margin-top:4px">
+            ${sortedStyles.map(d => styleRow(d)).join('')}
+          </div>
         </div>
       `;
     }).join('');
@@ -267,8 +304,10 @@ function renderPurchasingList() {
         <div data-cat-toggle="${escapeHtml(g.catId)}"
           style="display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--c-cream); border:1px solid var(--c-blush); border-radius:8px; cursor:pointer">
           <span style="flex-shrink:0; color:var(--c-rose)">${icon(isOpen ? 'chevron-down' : 'chevron-right', 16)}</span>
-          <span style="font-size:16px; font-weight:700; color:var(--c-coffee)">${escapeHtml(g.catName)}</span>
-          ${shortageText(sum.shortage, 16)}
+          <span style="font-size:15px; font-weight:700; color:var(--c-coffee)">${escapeHtml(g.catName)}</span>
+          ${sum.shortage > 0
+            ? `<span style="color:var(--c-orange); font-weight:700; font-size:15px">×${sum.shortage}</span>`
+            : `<span style="color:#1a5c2a; font-weight:700; font-size:13px">${icon('check', 14)} 已買齊</span>`}
           <span style="margin-left:auto; font-size:11px; color:var(--c-rose-text); text-align:right">${g.products.length} 項商品・需求 ${sum.needed} 件</span>
         </div>
         ${isOpen ? `<div style="padding:8px 0 0 8px">${productsHtml}</div>` : ''}
