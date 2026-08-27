@@ -195,33 +195,43 @@ function renderPurchasingList() {
   const pMap = purchasingState.purchasedMap;
   const groups = groupDemandByCategory(demand, purchasingState.productMap, appState.categories);
 
-  // 單一款式的那一列（需求量／已採購輸入／還缺）
+  // 「還缺」的文字。這是採購時真正要看的數字，所以字要大、顏色要明顯。
+  // 還缺 > 0 用橘色強調（要再去買）；剛好買齊用綠色；買超過需求用紅色提醒（可能重複下單了）
+  const shortageText = (shortage, size) => {
+    if (shortage > 0) {
+      return `<span style="color:var(--c-orange); font-weight:700; font-size:${size}px">還缺 ${shortage}</span>`;
+    }
+    if (shortage === 0) {
+      return `<span style="color:#1a5c2a; font-weight:700; font-size:${size}px">${icon('check', size)} 已買齊</span>`;
+    }
+    return `<span style="color:#a33; font-weight:700; font-size:${size}px">多買 ${Math.abs(shortage)}</span>`;
+  };
+
+  // 單一款式的那一列。
+  // 版面刻意做成「左邊看名稱和還缺、右邊才是統計和輸入」：
+  // 採買現場是一手拿手機一手挑貨，最需要一眼掃到「這個要買幾個」，
+  // 所以款式名稱和還缺數量放最左邊並排、字級加大，需求量和輸入框往右靠
   const styleRow = (d, showStyleName) => {
     const purchased = pMap[d.key] || 0;
     const shortage = d.needed - purchased;
 
-    // 還缺 > 0 用橘色強調（要再去買）；剛好買齊用綠色；買超過需求用紅色提醒（可能重複下單了）
-    let shortageHtml;
-    if (shortage > 0) {
-      shortageHtml = `<span style="color:var(--c-orange); font-weight:700">還缺 ${shortage}</span>`;
-    } else if (shortage === 0) {
-      shortageHtml = `<span style="color:#1a5c2a; font-weight:700">${icon('check', 14)} 已買齊</span>`;
-    } else {
-      shortageHtml = `<span style="color:#a33; font-weight:700">多買 ${Math.abs(shortage)}</span>`;
-    }
-
     return `
-      <div style="display:flex; align-items:center; gap:8px; padding:6px 0 6px 12px; border-top:0.5px solid var(--c-blush)">
-        <div style="flex:1; min-width:0; font-size:12px; color:var(--c-coffee)">
-          ${showStyleName ? escapeHtml(d.style || '（不挑款）') : '<span style="color:var(--c-rose-text)">數量</span>'}
-          <span style="font-size:10px; color:var(--c-rose-text)">・${d.orders.length} 筆訂單</span>
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 0 8px 12px; border-top:0.5px solid var(--c-blush)">
+        <div style="flex:1; min-width:0; display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+          <span style="font-size:15px; font-weight:700; color:var(--c-coffee)">
+            ${showStyleName ? escapeHtml(d.style || '（不挑款）') : '數量'}
+          </span>
+          ${shortageText(shortage, 15)}
         </div>
-        <div style="width:60px; text-align:center; font-size:14px; font-weight:700; color:var(--c-coffee)">${d.needed}</div>
-        <div style="width:80px; text-align:center">
+        <div style="flex-shrink:0; display:flex; align-items:center; gap:10px">
+          <span style="font-size:11px; color:var(--c-rose-text); text-align:right">
+            需求 <strong style="font-size:13px; color:var(--c-coffee)">${d.needed}</strong><br>
+            ${d.orders.length} 筆訂單
+          </span>
+          <span style="font-size:11px; color:var(--c-rose-text)">已採購</span>
           <input type="number" min="0" value="${purchased}" data-purchased="${escapeHtml(d.key)}"
             style="width:64px; text-align:center; border:0.5px solid var(--c-rose); border-radius:6px; padding:5px">
         </div>
-        <div style="width:90px; text-align:center; font-size:12px">${shortageHtml}</div>
       </div>
     `;
   };
@@ -236,11 +246,16 @@ function renderPurchasingList() {
       // 只有一個款式而且款式名稱是空的（不挑款商品）時，不用再多一層款式名稱
       const singleNoStyle = p.styles.length === 1 && !p.styles[0].style;
       return `
-        <div style="border:1px solid var(--c-blush); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#fff">
-          <div style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap">
-            <span style="font-size:13px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name)}</span>
-            ${p.styles.length > 1 ? `<span style="font-size:10px; color:var(--c-rose-text)">${p.styles.length} 個款式・合計 ${pSum.needed} 件</span>` : ''}
-            ${p.otherCategoryNames.length > 0 ? `<span style="font-size:10px; color:var(--c-rose-text)">（也屬於 ${p.otherCategoryNames.map(escapeHtml).join('、')}）</span>` : ''}
+        <div style="border:1px solid var(--c-blush); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fff">
+          <div style="display:flex; align-items:center; gap:10px">
+            <div style="flex:1; min-width:0; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+              <span style="font-size:17px; font-weight:700; color:var(--c-coffee)">${escapeHtml(p.name)}</span>
+              ${shortageText(pSum.shortage, 17)}
+            </div>
+            <div style="flex-shrink:0; font-size:11px; color:var(--c-rose-text); text-align:right">
+              ${p.styles.length > 1 ? `${p.styles.length} 個款式・合計 ${pSum.needed} 件` : `需求 ${pSum.needed} 件`}
+              ${p.otherCategoryNames.length > 0 ? `<br>也屬於 ${p.otherCategoryNames.map(escapeHtml).join('、')}` : ''}
+            </div>
           </div>
           ${p.styles.map(d => styleRow(d, !singleNoStyle)).join('')}
         </div>
@@ -252,11 +267,9 @@ function renderPurchasingList() {
         <div data-cat-toggle="${escapeHtml(g.catId)}"
           style="display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--c-cream); border:1px solid var(--c-blush); border-radius:8px; cursor:pointer">
           <span style="flex-shrink:0; color:var(--c-rose)">${icon(isOpen ? 'chevron-down' : 'chevron-right', 16)}</span>
-          <span style="flex:1; min-width:0; font-size:13px; font-weight:700; color:var(--c-coffee)">${escapeHtml(g.catName)}</span>
-          <span style="font-size:11px; color:var(--c-rose-text)">${g.products.length} 項商品・需求 ${sum.needed} 件</span>
-          ${sum.shortage > 0
-            ? `<span style="font-size:11px; font-weight:700; color:var(--c-orange)">還缺 ${sum.shortage}</span>`
-            : `<span style="font-size:11px; font-weight:700; color:#1a5c2a">${icon('check', 13)} 已買齊</span>`}
+          <span style="font-size:16px; font-weight:700; color:var(--c-coffee)">${escapeHtml(g.catName)}</span>
+          ${shortageText(sum.shortage, 16)}
+          <span style="margin-left:auto; font-size:11px; color:var(--c-rose-text); text-align:right">${g.products.length} 項商品・需求 ${sum.needed} 件</span>
         </div>
         ${isOpen ? `<div style="padding:8px 0 0 8px">${productsHtml}</div>` : ''}
       </div>
