@@ -15,9 +15,18 @@ async function renderOrdersPage() {
     <div class="admin-card">
       <h3 style="font-size:14px; color:var(--c-coffee); margin-bottom:10px">匯出訂單匯入格式（賣貨便）</h3>
       <p style="font-size:12px; color:var(--c-rose-text); margin-bottom:12px; line-height:1.7">
-        選擇日期區間後下載，僅會匯出「超商取貨」類型的訂單（含取件人/手機/門市等完整資料）。<br>
+        只會匯出「超商取貨」的訂單（宅配訂單不適用賣貨便格式，會自動排除）。<br>
+        訂單金額已扣除優惠折抵與已收訂金，也就是超商實際要向客人收的貨款。<br>
         下載後請另存或貼入賣貨便原始 .xlsm 範本中執行「驗證」。為避免重複匯入，請每次匯出後記下匯出區間。
       </p>
+      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; font-size:13px; color:var(--c-coffee)">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <input type="checkbox" id="exportInstock"> 現貨訂單
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <input type="checkbox" id="exportPreorder"> 預購訂單
+        </label>
+      </div>
       <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end">
         <div class="field" style="margin-bottom:0; flex:1; min-width:140px">
           <label class="field-label">起始日期</label>
@@ -1133,12 +1142,35 @@ async function doMergeOrders() {
 // 匯出訂單為賣貨便「訂單匯入」格式 (.xlsx)
 // 欄位：取件人姓名/取件人手機/取件門市/溫層/商品/訂單金額/運費金額/買家下訂日期/商品備註/其他資訊
 // ============================================
+// 算出賣貨便「訂單金額」欄位要填多少，也就是超商實際要向客人收的貨款。
+// 運費是賣貨便另一個獨立欄位，所以這裡只算商品的部分，不含運費。
+//
+// 為什麼要這樣扣：
+//   優惠折抵 / 額外折抵 → 客人結帳時看到的就是折扣後的金額，
+//     如果照商品小計去收，超商會多收客人錢（原本的寫法就是直接用 subtotal，會多收）
+//   已收訂金 → 預購訂單客人通常先付過訂金了，取貨時只需要補尾款
+function calcCodAmount(order) {
+  const subtotal = order.subtotal ?? order.total ?? 0;
+  const discount = order.discountAmount || 0;
+  const manual = order.manualDiscount || 0;
+  const deposit = order.depositReceived || 0;
+  // 夾在 0 以上：訂金收超過商品金額時不能變成負數（賣貨便不接受負數金額）
+  return Math.max(0, subtotal - discount - manual - deposit);
+}
+
 async function exportOrdersToExcel() {
   const startDateStr = document.getElementById('exportStartDate').value;
   const endDateStr = document.getElementById('exportEndDate').value;
 
   if (!startDateStr || !endDateStr) {
     showToast('請選擇起訖日期');
+    return;
+  }
+
+  const wantInstock = document.getElementById('exportInstock').checked;
+  const wantPreorder = document.getElementById('exportPreorder').checked;
+  if (!wantInstock && !wantPreorder) {
+    showToast('請勾選要匯出「現貨訂單」或「預購訂單」');
     return;
   }
 
@@ -1150,16 +1182,21 @@ async function exportOrdersToExcel() {
     const startDate = new Date(startDateStr + 'T00:00:00');
     const endDate = new Date(endDateStr + 'T23:59:59');
 
-    // 注意：這裡刻意只用單一 where 條件，不搭配 orderBy，
-    // 因為 where+orderBy 不同欄位的組合查詢在 Firestore 需要額外手動建立複合索引，
-    // 否則查詢會直接失敗。排序改在前端做，避免這個問題。
-    const snap = await db.collection(COL.ORDERS)
-      .where('orderType', '==', 'cvs')
-      .get();
+    // 這裡不能再用 where('orderType','==','cvs') 篩選：那樣只會撈到現貨訂單，
+    // 含預購的訂單（orderType='line'）永遠不會被匯出。改成全部撈回來後在前端判斷，
+    // 也順便避開「where + orderBy 不同欄位需要建立複合索引」的限制
+    const snap = await db.collection(COL.ORDERS).get();
 
     const orders = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(o => o.deliveryMethod !== 'homeDelivery') // 宅配訂單不是超商取貨，賣貨便格式不適用，排除掉
+      // 宅配訂單不是超商取貨（沒有門市資料、也不是貨到付款），賣貨便格式不適用，一律排除
+      .filter(o => o.deliveryMethod !== 'homeDelivery')
+      // 依勾選決定要現貨還是預購。判斷方式跟採購單一致：
+      // 訂單裡只要有任何一項是預購，整張就算「含預購」
+      .filter(o => {
+        const hasPreorder = (o.items || []).some(item => isPreorderOrderItem(o, item));
+        return hasPreorder ? wantPreorder : wantInstock;
+      })
       .filter(o => {
         const t = o.createdAt?.toDate ? o.createdAt.toDate() : null;
         return t && t >= startDate && t <= endDate;
@@ -1171,7 +1208,7 @@ async function exportOrdersToExcel() {
       });
 
     if (orders.length === 0) {
-      showToast('選擇的日期區間內沒有超商取貨訂單');
+      showToast('選擇的條件與日期區間內沒有符合的超商取貨訂單');
       return;
     }
 
@@ -1186,7 +1223,7 @@ async function exportOrdersToExcel() {
         o.cvsStore || '',
         '常溫',
         '楓之谷周邊',
-        o.subtotal ?? o.total ?? 0,
+        calcCodAmount(o),
         o.shippingFee ?? calcShippingFee(o.subtotal ?? o.total ?? 0),
         dateStr,
         o.cvsStoreName || '',
