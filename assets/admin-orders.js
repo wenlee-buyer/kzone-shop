@@ -43,16 +43,16 @@ async function renderOrdersPage() {
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
       <div class="admin-card" style="margin-bottom:0">
         <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
-          <span class="pill pill-instock">超商取貨</span> 現貨訂單
+          <span class="pill pill-instock">現貨</span> 現貨訂單
         </h3>
-        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">貨到付款・可匯出賣貨便格式</p>
+        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">超商取貨可匯出賣貨便・紫色「宅配」標籤者需等客人匯款</p>
         <div id="ordersListCvs"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
       </div>
       <div class="admin-card" style="margin-bottom:0">
         <h3 style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:4px; display:flex; align-items:center; gap:8px">
-          <span class="pill pill-preorder">LINE</span> 含預購／宅配訂單
+          <span class="pill pill-preorder">預購</span> 含預購訂單
         </h3>
-        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">需透過 LINE 官方帳號確認（含需匯款的宅配訂單）</p>
+        <p style="font-size:11px; color:var(--c-rose-text); margin-bottom:12px">需透過 LINE 官方帳號確認・到貨後標記出貨會從採購單扣除</p>
         <div id="ordersListLine"><div class="loading-wrap"><div class="spin"></div>載入中...</div></div>
       </div>
     </div>
@@ -190,11 +190,13 @@ async function loadAndRenderOrders() {
     });
     console.log('[訂單診斷] 訂單類型分布：', orderTypeCounts);
 
-    // 宅配訂單雖然 orderType 可能是 'cvs'（現貨、不用等小編確認），但取貨方式不是超商取貨，
-    // 賣貨便匯出格式也不適用，所以歸到右邊「需透過 LINE 確認」欄位一起處理（因為也需要私訊小編拿匯款帳號）
-    // 注意：舊訂單的 deliveryMethod 可能是 undefined（在新增此欄位之前的訂單），應該當作 'cvs' 對待
-    const cvsOrders = orders.filter(o => o.orderType === 'cvs' && o.deliveryMethod !== 'homeDelivery');
-    const lineOrders = orders.filter(o => o.orderType !== 'cvs' || o.deliveryMethod === 'homeDelivery');
+    // 左右兩欄只依「現貨 / 含預購」區分，不再把宅配訂單另外挑到右邊。
+    // （原本宅配單被歸到右欄，結果全是現貨商品的宅配單出現在「含預購」欄位，看起來像跑錯地方。）
+    // 宅配單靠卡片上的紫色「宅配」標籤和「待轉帳／已匯款」標籤區分即可；
+    // 賣貨便匯出那邊本來就會自動排除宅配單，不會因為放在左欄而匯錯。
+    // 注意：舊訂單的 deliveryMethod 可能是 undefined（在新增此欄位之前的訂單），一律當作超商處理
+    const cvsOrders = orders.filter(o => o.orderType === 'cvs');
+    const lineOrders = orders.filter(o => o.orderType !== 'cvs');
 
     console.log(`[訂單診斷] 超商現貨：${cvsOrders.length} 筆 / LINE含預購+宅配：${lineOrders.length} 筆`);
 
