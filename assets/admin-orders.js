@@ -365,12 +365,19 @@ function renderOrderCard(order) {
       <div id="detail-order-${order.id}" style="display:none; padding:12px 14px">
         ${shippedInfo}
         ${cvsInfo}
-        ${(order.items || []).map(item => `
-          <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:0.5px solid var(--c-blush); font-size:12px">
-            <span>${escapeHtml(item.name)}${item.style ? ` (${escapeHtml(item.style)})` : ''} x${item.qty}</span>
-            <span style="color:var(--c-orange); font-weight:700">${formatPrice(item.price * item.qty)}</span>
+        ${(order.items || []).map(item => {
+          // 每一項都標出現貨/預購，混合訂單才看得出哪些還在等貨
+          const isPre = isPreorderOrderItem(order, item);
+          return `
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:0.5px solid var(--c-blush); font-size:12px">
+            <span style="flex:1; min-width:0">
+              <span class="pill ${isPre ? 'pill-preorder' : 'pill-instock'}" style="font-size:10px; margin-right:4px">${isPre ? '預購' : '現貨'}</span>
+              ${escapeHtml(item.name)}${item.style ? ` (${escapeHtml(item.style)})` : ''} x${item.qty}
+            </span>
+            <span style="color:var(--c-orange); font-weight:700; flex-shrink:0">${formatPrice(item.price * item.qty)}</span>
           </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
     </div>
   `;
@@ -592,8 +599,8 @@ function renderEditOrderItems() {
         <div style="font-size:12px; font-weight:700; color:var(--c-coffee)">${escapeHtml(item.name)}${item.style ? `<span style="color:var(--c-rose-text); font-weight:400"> (${escapeHtml(item.style)})</span>` : ''}</div>
         <div style="font-size:11px; color:var(--c-rose-text)">${formatPrice(item.price)} / 件</div>
         <div style="display:flex; gap:4px; margin-top:4px">
-          <button class="chip ${isPreorderOrderItem(editOrderState.order, item) ? '' : 'selected'}" data-eo-type="${i}" data-type="instock" type="button" style="font-size:10px; padding:2px 8px">現貨</button>
-          <button class="chip ${isPreorderOrderItem(editOrderState.order, item) ? 'selected' : ''}" data-eo-type="${i}" data-type="preorder" type="button" style="font-size:10px; padding:2px 8px">預購</button>
+          <div class="tag-chip ${isPreorderOrderItem(editOrderState.order, item) ? '' : 'selected'}" data-eo-type="${i}" data-type="instock" style="font-size:11px; padding:3px 10px">現貨</div>
+          <div class="tag-chip ${isPreorderOrderItem(editOrderState.order, item) ? 'selected' : ''}" data-eo-type="${i}" data-type="preorder" style="font-size:11px; padding:3px 10px">預購</div>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:6px">
