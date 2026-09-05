@@ -829,6 +829,9 @@ async function saveProduct(styles) {
       }
     }
 
+    // 商品有異動時清掉前台快取，讓你自己的瀏覽器立刻看到新資料
+    //（客人那邊的快取最多 3 分鐘就會自己過期）
+    clearStorefrontCache();
     closeProductEditor();
     loadAndRenderProductsTable();
 

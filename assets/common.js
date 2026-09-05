@@ -182,6 +182,20 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ---- 防止滑鼠滾輪改掉數字欄位的值 ----
+// 瀏覽器的預設行為：游標停在 <input type="number"> 上、而且該欄位是焦點時，
+// 滾動滾輪會直接把數字加一或減一。結果就是「輸入完金額，想往下捲頁面，金額整個跑掉」，
+// 而且很容易沒發現就按下儲存，把錯的價格或庫存存進資料庫。
+//
+// 作法是滾動時讓欄位失去焦點：頁面照常捲動，但數字不會被改到。
+// 用 capture 階段監聽 document，這樣後來才動態產生的欄位（各種編輯視窗）也一併適用。
+document.addEventListener('wheel', (e) => {
+  const el = document.activeElement;
+  if (el && el.type === 'number' && el === e.target) {
+    el.blur();
+  }
+}, { passive: true, capture: true });
+
 function goToProduct(id) {
   window.location.href = `product.html?id=${id}`;
 }
@@ -625,7 +639,11 @@ async function logFailedOrder(info) {
         name: i.name || '',
         style: i.style || '',
         price: i.price ?? 0,
-        qty: i.qty ?? 0
+        qty: i.qty ?? 0,
+        image: i.image || '',
+        // 一定要留下當下的現貨/預購狀態，之後補單才分得出哪些要進採購清單
+        stockType: i.stockType || (info.hasPreorder ? 'preorder' : 'instock'),
+        deliveryMethod: i.deliveryMethod || (info.hasHomeDelivery ? 'homeDelivery' : 'cvs')
       })),
       subtotal: info.subtotal ?? 0,
       discountAmount: info.discount ?? 0,

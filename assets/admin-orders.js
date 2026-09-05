@@ -121,6 +121,7 @@ async function loadAndRenderFailedOrders() {
         showToast(f.resolved ? '已改回未處理' : '已標記為已處理');
         loadAndRenderFailedOrders();
       });
+      document.getElementById(`restore-failed-${f.id}`)?.addEventListener('click', () => restoreFailedOrder(f));
       document.getElementById(`del-failed-${f.id}`)?.addEventListener('click', async () => {
         if (!confirm('確定要刪除這筆失敗紀錄嗎？')) return;
         await db.collection(COL.FAILED_ORDERS).doc(f.id).delete();
@@ -131,6 +132,79 @@ async function loadAndRenderFailedOrders() {
   } catch (err) {
     console.error(err);
     wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入失敗紀錄失敗</div>`;
+  }
+}
+
+// 把一筆結帳失敗紀錄補成正式訂單。
+// 客人當初確實下過單、資料也都留著了，只是因為額度用盡或連線問題沒寫進資料庫，
+// 所以這裡直接用同一份資料重建訂單，不用請客人重新下單一次。
+async function restoreFailedOrder(f) {
+  const itemCount = (f.items || []).reduce((s, i) => s + (i.qty || 0), 0);
+  if (!confirm(`要用這筆紀錄建立正式訂單嗎？\n\n客人：${f.lineName || '未提供'}\n商品：共 ${itemCount} 件\n金額：${formatPrice(f.total || 0)}\n\n建立後這筆紀錄會標記為已處理。`)) return;
+
+  try {
+    // 補回來的商品項目要帶著現貨/預購狀態，採購清單才算得出正確需求。
+    // 舊的失敗紀錄沒有存這個欄位，就退回用整筆訂單的預購與否來判斷
+    const items = (f.items || []).map(i => ({
+      productId: i.productId || '',
+      name: i.name || '',
+      style: i.style || '',
+      price: i.price ?? 0,
+      qty: i.qty ?? 0,
+      image: i.image || '',
+      stockType: i.stockType || (f.hasPreorder ? 'preorder' : 'instock'),
+      deliveryMethod: i.deliveryMethod || (f.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs')
+    }));
+    const anyPreorder = items.some(i => i.stockType === 'preorder');
+
+    const createdAt = f.createdAt?.toDate ? f.createdAt.toDate() : new Date();
+    const orderDateStr = `${createdAt.getFullYear()}/${createdAt.getMonth() + 1}/${createdAt.getDate()}`;
+
+    await db.collection(COL.ORDERS).add({
+      orderType: anyPreorder ? 'line' : 'cvs',
+      deliveryMethod: f.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs',
+      orderNo: f.orderNo || genOrderNo(),
+      lineName: f.lineName || '',
+      cvsName: f.cvsName || '',
+      cvsPhone: f.cvsPhone || '',
+      cvsStore: f.cvsStore || '',
+      cvsStoreName: f.cvsStoreName || '',
+      address: f.address || '',
+      paymentConfirmed: f.deliveryMethod === 'homeDelivery' ? false : null,
+      items,
+      subtotal: f.subtotal ?? 0,
+      couponCode: f.couponCode || null,
+      discountAmount: f.discountAmount ?? 0,
+      shippingFee: f.shippingFee ?? 0,
+      total: f.total ?? 0,
+      orderDate: orderDateStr,
+      // 保留原本下單時間，訂單才會排在正確的時序位置，不會跑到最上面看起來像新單
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      restoredFromFailure: true,
+      originalFailedAt: f.createdAt || null
+    });
+
+    // 訂單建立成功後才處理庫存。當初失敗多半就是卡在扣庫存這一步，所以庫存很可能沒扣到，
+    // 這裡補扣一次；萬一庫存不足也不能讓訂單消失（訂單已經建好了），只提醒你去人工確認
+    let stockWarning = '';
+    if (!f.stockAlreadyDeducted) {
+      try {
+        await deductStockForOrder(items);
+      } catch (stockErr) {
+        console.error('補單成功，但扣庫存失敗:', stockErr);
+        stockWarning = '（庫存未扣，請自行確認）';
+      }
+    }
+
+    await db.collection(COL.FAILED_ORDERS).doc(f.id).update({ resolved: true });
+
+    invalidateOrdersCache();
+    showToast(`已補成訂單 ${f.orderNo || ''}${stockWarning}`);
+    loadAndRenderOrders();
+    loadAndRenderFailedOrders();
+  } catch (err) {
+    console.error('補單失敗:', err);
+    showToast('補單失敗，請稍後再試（失敗紀錄仍保留）');
   }
 }
 
@@ -163,7 +237,8 @@ function renderFailedOrderCard(f) {
           </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0">
-          <button class="btn-icon ${isResolved ? '' : 'active-accent'}" id="resolve-failed-${f.id}" style="font-size:11px; padding:6px 8px">${isResolved ? '改回未處理' : '標記已處理'}</button>
+          ${!isResolved ? `<button class="btn-icon active-accent" id="restore-failed-${f.id}" title="用這筆紀錄的資料建立正式訂單" style="font-size:11px; padding:6px 8px">補成訂單</button>` : ''}
+          <button class="btn-icon" id="resolve-failed-${f.id}" style="font-size:11px; padding:6px 8px">${isResolved ? '改回未處理' : '標記已處理'}</button>
           <button class="btn-icon danger" id="del-failed-${f.id}" title="刪除此紀錄">${icon('trash', 14)}</button>
         </div>
       </div>
@@ -171,12 +246,32 @@ function renderFailedOrderCard(f) {
   `;
 }
 
-async function loadAndRenderOrders() {
+// 後台這一輪撈回來的訂單，暫存起來給併單視窗、採購單共用。
+// 原本每個地方都各自重打一次 Firestore（訂單列表 200 筆、併單視窗 200 筆、採購單 300 筆），
+// 光是點開幾個功能就是上百次讀取，很容易把免費方案每天 5 萬次的額度燒完，
+// 額度一爆連客人結帳都會失敗（會收到 Quota exceeded）。
+let ordersCache = { data: null, at: 0 };
+const ORDERS_CACHE_TTL = 60 * 1000; // 1 分鐘內重複使用，超過就重新讀
+
+async function getOrdersForAdmin(forceRefresh) {
+  if (!forceRefresh && ordersCache.data && (Date.now() - ordersCache.at < ORDERS_CACHE_TTL)) {
+    return ordersCache.data;
+  }
+  const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
+  ordersCache = { data: snap.docs.map(d => ({ id: d.id, ...d.data() })), at: Date.now() };
+  return ordersCache.data;
+}
+
+// 改到訂單資料時呼叫，讓下一次讀取一定拿到最新的
+function invalidateOrdersCache() {
+  ordersCache = { data: null, at: 0 };
+}
+
+async function loadAndRenderOrders(forceRefresh) {
   const cvs = document.getElementById('ordersListCvs');
   const line = document.getElementById('ordersListLine');
   try {
-    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
-    const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const orders = await getOrdersForAdmin(forceRefresh);
 
     console.log(`[訂單診斷] 加載總數：${orders.length} 筆訂單`);
 
@@ -391,6 +486,7 @@ async function togglePaymentConfirmed(order) {
   if (newValue && !confirm(`確定要標記「${order.lineName || '此訂單'}」已完成匯款嗎？`)) return;
   await db.collection(COL.ORDERS).doc(order.id).update({ paymentConfirmed: newValue });
   showToast(newValue ? '已標記為已匯款' : '已取消已匯款標記');
+  invalidateOrdersCache();
   loadAndRenderOrders();
 }
 
@@ -398,6 +494,7 @@ async function deleteOrder(orderId) {
   if (!confirm('確定要刪除這筆訂單紀錄嗎？此動作無法復原。')) return;
   await db.collection(COL.ORDERS).doc(orderId).delete();
   showToast('訂單已刪除');
+  invalidateOrdersCache();
   loadAndRenderOrders();
 }
 
@@ -454,6 +551,7 @@ function openShipModal(order) {
     await adjustPurchasedForOrder(order, +1);
     close();
     showToast('已取消出貨標記');
+    invalidateOrdersCache();
     loadAndRenderOrders();
     loadAndRenderFailedOrders();
   });
@@ -482,6 +580,7 @@ function openShipModal(order) {
       }
       close();
       showToast('出貨資訊已儲存');
+      invalidateOrdersCache();
       loadAndRenderOrders();
     } catch (err) {
       console.error(err);
@@ -593,13 +692,18 @@ function renderEditOrderItems() {
     return;
   }
   list.innerHTML = editOrderState.items.map((item, i) => `
-    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:0.5px solid var(--c-blush)">
+    <div data-eo-row="${i}" style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:0.5px solid var(--c-blush)">
       <div style="width:36px; height:36px; border-radius:6px; overflow:hidden; background:var(--c-cream); flex-shrink:0">
         ${item.image ? `<img src="${escapeHtml(item.image)}" style="width:100%;height:100%;object-fit:cover">` : ''}
       </div>
       <div style="flex:1; min-width:0">
         <div style="font-size:12px; font-weight:700; color:var(--c-coffee)">${escapeHtml(item.name)}${item.style ? `<span style="color:var(--c-rose-text); font-weight:400"> (${escapeHtml(item.style)})</span>` : ''}</div>
-        <div style="font-size:11px; color:var(--c-rose-text)">${formatPrice(item.price)} / 件</div>
+        <div style="display:flex; align-items:center; gap:4px; margin-top:2px">
+          <span style="font-size:11px; color:var(--c-rose-text)">單價</span>
+          <input type="number" min="0" value="${item.price ?? 0}" data-eo-price="${i}"
+            style="width:74px; font-size:12px; text-align:right; border:0.5px solid var(--c-rose); border-radius:6px; padding:3px 6px">
+          <span style="font-size:11px; color:var(--c-rose-text)">/ 件</span>
+        </div>
         <div style="display:flex; gap:4px; margin-top:4px">
           <div class="tag-chip ${isPreorderOrderItem(editOrderState.order, item) ? '' : 'selected'}" data-eo-type="${i}" data-type="instock" style="font-size:11px; padding:3px 10px">現貨</div>
           <div class="tag-chip ${isPreorderOrderItem(editOrderState.order, item) ? 'selected' : ''}" data-eo-type="${i}" data-type="preorder" style="font-size:11px; padding:3px 10px">預購</div>
@@ -610,7 +714,7 @@ function renderEditOrderItems() {
         <span style="font-size:12px; font-weight:700; min-width:18px; text-align:center">${item.qty}</span>
         <button class="ci-qbtn" data-eo-qty-plus="${i}" type="button">+</button>
       </div>
-      <div style="font-size:12px; font-weight:700; color:var(--c-orange); width:60px; text-align:right">${formatPrice(item.price * item.qty)}</div>
+      <div data-eo-linetotal style="font-size:12px; font-weight:700; color:var(--c-orange); width:60px; text-align:right">${formatPrice(item.price * item.qty)}</div>
       <button class="btn-icon danger" data-eo-remove="${i}" type="button" style="padding:4px 6px">${icon('trash', 14)}</button>
     </div>
   `).join('');
@@ -624,6 +728,24 @@ function renderEditOrderItems() {
       editOrderState.items[i].stockType = btn.dataset.type;
       renderEditOrderItems();
       updateEditOrderSummary();
+    });
+  });
+  // 單價可以直接改：連線時常常臨時調整某個商品的價格，或跟客人談好單張訂單的特價。
+  // 用 input 事件即時反映到小計，但不重畫整份清單——重畫會讓輸入框失去焦點，
+  // 打到一半游標就跑掉，數字會輸入不完整
+  list.querySelectorAll('[data-eo-price]').forEach(input => {
+    input.addEventListener('input', () => {
+      const i = parseInt(input.dataset.eoPrice);
+      const value = parseFloat(input.value);
+      // 清空或亂輸入時先當作 0，避免小計變成 NaN；離開欄位時再修正顯示
+      editOrderState.items[i].price = (isNaN(value) || value < 0) ? 0 : value;
+      const lineTotal = input.closest('[data-eo-row]')?.querySelector('[data-eo-linetotal]');
+      if (lineTotal) lineTotal.textContent = formatPrice(editOrderState.items[i].price * editOrderState.items[i].qty);
+      updateEditOrderSummary();
+    });
+    input.addEventListener('blur', () => {
+      const i = parseInt(input.dataset.eoPrice);
+      input.value = editOrderState.items[i].price;
     });
   });
   list.querySelectorAll('[data-eo-qty-minus]').forEach(btn => {
@@ -802,6 +924,14 @@ async function saveEditedOrder() {
     return;
   }
 
+  // 單價可以在這個視窗直接改，存檔前要確認每一項都是合法數字。
+  // 少了這一步，欄位被清空時會存進 NaN，訂單總額會整個變成 NaN 而且救不回來
+  const badPrice = editOrderState.items.find(i => typeof i.price !== 'number' || isNaN(i.price) || i.price < 0);
+  if (badPrice) {
+    showToast(`「${badPrice.name}」的單價不正確，請重新輸入`);
+    return;
+  }
+
   // 收件/取貨資訊：客人下單後常常會改地址或電話，這裡要能直接改。
   // 宅配訂單有地址、沒有門市；超商訂單有門市、沒有地址，所以對應的輸入框只會出現一種，
   // 讀取時用 ?. 保護，抓不到的那一邊就沿用原本的值，不要不小心把它清成空字串
@@ -872,6 +1002,7 @@ async function saveEditedOrder() {
 
     showToast('訂單已更新');
     closeEditOrderModal();
+    invalidateOrdersCache();
     loadAndRenderOrders();
   } catch (err) {
     console.error('編輯訂單失敗:', err);
@@ -1003,12 +1134,11 @@ async function openMergeOrderModal(primary) {
   document.getElementById('confirmMergeBtn').addEventListener('click', doMergeOrders);
 
   try {
-    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
+    // 直接用訂單列表那邊已經讀好的資料，不要為了開一個視窗再打一次資料庫
+    const all = await getOrdersForAdmin();
     // 只列出「未出貨」而且不是自己的訂單。已出貨的不能併（貨都寄出去了），
     // 同一個客人的通常排在前面，但不強制只顯示同名，因為 LINE 名稱常常對不上本人
-    mergeState.candidates = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(o => o.id !== mergeState.primary.id && !o.shippedAt);
+    mergeState.candidates = all.filter(o => o.id !== mergeState.primary.id && !o.shippedAt);
     renderMergeCandidates();
   } catch (err) {
     console.error(err);
@@ -1138,6 +1268,7 @@ async function doMergeOrders() {
 
     document.getElementById('mergeOrderModalOverlay')?.remove();
     showToast(`已併單，保留編號 ${primary.orderNo || ''}`);
+    invalidateOrdersCache();
     loadAndRenderOrders();
   } catch (err) {
     console.error('併單失敗:', err);

@@ -47,7 +47,12 @@ async function renderPurchasingPage() {
     </div>
   `;
 
-  document.getElementById('refreshPurchasingBtn').addEventListener('click', loadAndRenderPurchasing);
+  // 按「重新整理」時才強制重讀資料庫（平常沿用快取，省讀取額度）
+  document.getElementById('refreshPurchasingBtn').addEventListener('click', () => {
+    invalidateOrdersCache();
+    clearStorefrontCache();
+    loadAndRenderPurchasing();
+  });
   await loadAndRenderPurchasing();
 }
 
@@ -59,14 +64,15 @@ async function loadAndRenderPurchasing() {
     // 訂單和採購進度一起讀，減少等待時間。
     // 訂單這裡刻意不加 where 條件（未出貨的判斷在 buildPurchaseDemand 裡做），
     // 因為 where + orderBy 不同欄位在 Firestore 需要額外建立複合索引，會直接查詢失敗
-    // 商品也要一起讀，因為採購清單要依商品的來源分類分組（訂單裡只存了 productId）
-    const [orderSnap, purchaseSnap, productSnap] = await Promise.all([
-      db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(300).get(),
+    // 訂單沿用訂單列表已經讀好的那份（getOrdersForAdmin 有 1 分鐘快取），
+    // 商品走前台的快取版本。原本這一頁每次打開就是「300 筆訂單 + 全部商品 + 全部採購紀錄」，
+    // 光是來回切換頁面就會吃掉大量 Firestore 讀取額度
+    const [orders, purchaseSnap, products] = await Promise.all([
+      getOrdersForAdmin(),
       db.collection(COL.PURCHASES).get(),
-      db.collection(COL.PRODUCTS).get()
+      fetchProductsCached()
     ]);
 
-    const orders = orderSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     purchasingState.demand = buildPurchaseDemand(orders);
 
     purchasingState.purchasedMap = {};
@@ -75,8 +81,8 @@ async function loadAndRenderPurchasing() {
     });
 
     purchasingState.productMap = {};
-    productSnap.docs.forEach(d => {
-      purchasingState.productMap[d.id] = { id: d.id, ...d.data() };
+    products.forEach(p => {
+      purchasingState.productMap[p.id] = p;
     });
 
     renderPurchasingList();
