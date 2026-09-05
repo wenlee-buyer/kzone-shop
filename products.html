@@ -95,7 +95,9 @@ let displayCount = 24;
 let searchQuery = '';
 
 async function init() {
-  await ensureDefaultData();
+  // 這裡刻意不呼叫 ensureDefaultData()：那是後台第一次啟用時建立預設資料用的，
+  // 前台每位訪客都跑一次等於白花 3 次讀取額度（分類/標籤/設定各檢查一次），
+  // 而這些資料早就存在了。大連線時這一項就能省下數千次讀取。
   refreshCartBadge();
 
   // 走快取版本，避免每次換頁都把整組分類/標籤重讀一次（Firestore 免費額度有限）
@@ -111,7 +113,14 @@ async function init() {
   // 支援從商品詳情頁的分類列點過來（例如 products.html?cat=xxx），一進頁面就先選好該分類
   const urlParams = new URLSearchParams(location.search);
   const catFromUrl = urlParams.get('cat');
-  if (catFromUrl) currentCatFilter = catFromUrl;
+  if (catFromUrl) {
+    currentCatFilter = catFromUrl;
+    // 從分享的分類連結進來時，直接顯示這個分類的「全部」商品，不要只顯示前 24 個。
+    // 原因：把分類連結傳給客人，就是希望他看到這個分類的完整內容；
+    // 雖然下方有「顯示全部商品」按鈕，但客人多半不會注意到，
+    // 會以為這個分類就只有那 24 樣，等於少賣了後面的商品
+    displayCount = Infinity;
+  }
 
   // 支援從首頁搜尋框跳過來（products.html?q=xxx），一進頁面就先套用搜尋關鍵字
   const qFromUrl = urlParams.get('q');
@@ -120,6 +129,8 @@ async function init() {
     document.getElementById('searchQueryWrap').style.display = 'block';
     document.getElementById('searchQueryInput').value = qFromUrl;
     document.getElementById('resultCount').textContent = `搜尋「${qFromUrl}」的結果`;
+    // 搜尋結果同理：客人是帶著明確目標來的，不該讓他以為只有前 24 筆符合
+    displayCount = Infinity;
   }
   document.getElementById('searchQueryInput').addEventListener('input', (e) => {
     searchQuery = e.target.value.trim();

@@ -140,7 +140,9 @@ let currentStockFilter = 'all';
 let activeTagFilters = new Set();
 
 async function init() {
-  await ensureDefaultData();
+  // 這裡刻意不呼叫 ensureDefaultData()：那是後台第一次啟用時建立預設資料用的，
+  // 前台每位訪客都跑一次等於白花 3 次讀取額度（分類/標籤/設定各檢查一次），
+  // 而這些資料早就存在了。大連線時這一項就能省下數千次讀取。
   refreshCartBadge();
 
   // 走快取版本，避免客人每點一頁就把整組分類/標籤重讀一次（Firestore 免費額度有限）

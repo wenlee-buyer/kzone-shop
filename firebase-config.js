@@ -89,6 +89,9 @@ function looksLikeHash(str) {
 // ============================================
 
 // 確保預設資料存在（只在集合是空的時候寫入，不會覆蓋已存在的資料）
+// 只有後台需要跑這個。前台每次載入都跑的話，等於每位訪客都白白多花 3 次讀取
+//（檢查分類、標籤、設定是否存在），但這些資料早就建好了，永遠不會是空的。
+// 大連線時光是這一項就可能吃掉好幾千次額度。
 async function ensureDefaultData() {
   try {
     const catSnap = await db.collection(COL.CATEGORIES).limit(1).get();
@@ -184,6 +187,11 @@ const CACHE_TTL = {
   SETTINGS: 30 * 60 * 1000   // 網站設定 30 分鐘
 };
 
+// 同一個 key 正在讀取中的請求，用來避免「同時呼叫三次就真的打三次資料庫」。
+// 例如頁面初始化時同時要商品、分類、標籤，這三個都來自同一份目錄快照，
+// 沒有這道處理的話快取還沒寫入就被呼叫三次，等於白白多花兩次讀取
+const inFlightFetches = {};
+
 async function cachedFetch(cacheKey, ttlMs, fetchFn) {
   const storageKey = `kzone_cache_${cacheKey}`;
   try {
@@ -196,7 +204,17 @@ async function cachedFetch(cacheKey, ttlMs, fetchFn) {
     // sessionStorage 讀不到或內容壞掉時直接當作沒有快取，不要影響正常流程
   }
 
-  const data = await fetchFn();
+  if (inFlightFetches[cacheKey]) return inFlightFetches[cacheKey];
+
+  inFlightFetches[cacheKey] = (async () => {
+    try {
+      return await fetchFn();
+    } finally {
+      delete inFlightFetches[cacheKey];
+    }
+  })();
+
+  const data = await inFlightFetches[cacheKey];
 
   try {
     sessionStorage.setItem(storageKey, JSON.stringify({ at: Date.now(), data }));
@@ -217,26 +235,108 @@ function clearStorefrontCache() {
   }
 }
 
-// 前台共用的讀取函式：全部走快取，避免每次換頁都重讀整個資料庫
-async function fetchProductsCached() {
-  return cachedFetch('products', CACHE_TTL.PRODUCTS, async () => {
-    const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+// ---- 商品目錄快照（大連線的關鍵優化）----
+// 問題：Firestore 是「每讀一筆文件算一次」，所以前台載入 150 個商品就是 150 次讀取。
+// 快取只能省下同一位客人的重複瀏覽，救不了新訪客——大連線時每位新客人都要付這 150 次，
+// 300 位新客人就把免費方案一天 5 萬次的額度用掉一半以上，額度一爆連結帳都會失敗。
+//
+// 解法：把「全部商品 + 分類 + 標籤」預先壓成「一份」文件。
+// 前台只要讀這一份就好，等於 150 次變成 1 次（省超過 99%）。
+// 這份快照由後台在商品/分類有異動時自動重建，所以內容跟資料庫是一致的。
+//
+// 安全機制：萬一快照不存在、壞掉或太舊，會自動退回原本的完整讀取，
+// 頁面不會因此壞掉（只是那一次比較耗額度）。
+const CATALOG_DOC = { collection: 'kzone_catalog', doc: 'main' };
+const CATALOG_MAX_AGE = 24 * 60 * 60 * 1000; // 超過一天沒重建就當作可疑，改用完整讀取
+
+// 快照裡只放「列表頁真正用得到」的欄位。
+// 商品詳情頁本來就會單獨讀那一筆完整資料，所以推薦文、完整圖片陣列這些不用塞進來，
+// 免得整份文件超過 Firestore 單一文件 1MB 的上限
+function toCatalogProduct(p) {
+  return {
+    id: p.id,
+    name: p.name || '',
+    price: p.price ?? 0,
+    images: (p.images && p.images.length > 0) ? [p.images[0]] : [], // 列表只會顯示封面
+    video: p.video || null,
+    styles: (p.styles || []).map(s => ({
+      name: s.name, stock: s.stock ?? null, price: s.price ?? null, stockType: s.stockType || null
+    })),
+    stock: p.stock ?? null,
+    stockType: p.stockType || 'instock',
+    deliveryMethod: p.deliveryMethod || 'cvs',
+    categoryIds: getProductCategoryIds(p),
+    tagIds: p.tagIds || [],
+    featured: !!p.featured,
+    sortOrder: p.sortOrder ?? 9999,
+    sortOrderByCategory: p.sortOrderByCategory || {},
+    createdAt: p.createdAt || null, // 「最新上架」排序要用
+    archived: false
+  };
+}
+
+// 後台在商品/分類/標籤/排序有異動後呼叫，重建這份快照
+async function rebuildCatalog() {
+  const [prodSnap, catSnap, tagSnap] = await Promise.all([
+    db.collection(COL.PRODUCTS).where('archived', '==', false).get(),
+    db.collection(COL.CATEGORIES).orderBy('order').get(),
+    db.collection(COL.TAGS).orderBy('order').get()
+  ]);
+
+  const payload = {
+    products: prodSnap.docs.map(d => toCatalogProduct({ id: d.id, ...d.data() })),
+    categories: catSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    tags: tagSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    generatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  await db.collection(CATALOG_DOC.collection).doc(CATALOG_DOC.doc).set(payload);
+  clearStorefrontCache();
+  return payload.products.length;
+}
+
+// 前台讀取目錄：優先用快照（1 次讀取），不能用時才退回完整讀取
+async function fetchCatalog() {
+  return cachedFetch('catalog', CACHE_TTL.PRODUCTS, async () => {
+    try {
+      const doc = await db.collection(CATALOG_DOC.collection).doc(CATALOG_DOC.doc).get();
+      if (doc.exists) {
+        const data = doc.data();
+        const generated = data.generatedAt?.toDate ? data.generatedAt.toDate().getTime() : 0;
+        const fresh = generated && (Date.now() - generated < CATALOG_MAX_AGE);
+        if (fresh && Array.isArray(data.products) && data.products.length > 0) {
+          return { products: data.products, categories: data.categories || [], tags: data.tags || [] };
+        }
+      }
+    } catch (e) {
+      console.warn('讀取商品目錄快照失敗，改用完整讀取:', e);
+    }
+
+    // 退路：快照不存在／太舊／壞掉時，照原本的方式一筆一筆讀
+    const [prodSnap, catSnap, tagSnap] = await Promise.all([
+      db.collection(COL.PRODUCTS).where('archived', '==', false).get(),
+      db.collection(COL.CATEGORIES).orderBy('order').get(),
+      db.collection(COL.TAGS).orderBy('order').get()
+    ]);
+    return {
+      products: prodSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+      categories: catSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+      tags: tagSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+    };
   });
+}
+
+// 前台共用的讀取函式：全部從同一份目錄快照取，不會重複讀取
+async function fetchProductsCached() {
+  return (await fetchCatalog()).products;
 }
 
 async function fetchCategoriesCached() {
-  return cachedFetch('categories', CACHE_TTL.TAXONOMY, async () => {
-    const snap = await db.collection(COL.CATEGORIES).orderBy('order').get();
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  });
+  return (await fetchCatalog()).categories;
 }
 
 async function fetchTagsCached() {
-  return cachedFetch('tags', CACHE_TTL.TAXONOMY, async () => {
-    const snap = await db.collection(COL.TAGS).orderBy('order').get();
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  });
+  return (await fetchCatalog()).tags;
 }
 
 // 取得商品的所有來源分類ID（相容新格式 categoryIds 陣列與舊格式 categoryId 字串）
