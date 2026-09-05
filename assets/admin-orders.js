@@ -309,6 +309,10 @@ async function loadAndRenderOrders(forceRefresh) {
   }
 }
 
+// 記住「已出貨」區塊是不是展開的。存在畫面重繪之外的地方，
+// 這樣標記出貨、編輯訂單之後重畫列表時，展開狀態不會被重設回收起
+const shippedExpanded = new Set();
+
 function renderOrderColumn(container, orders, colType) {
   if (orders.length === 0) {
     container.innerHTML = `<div class="empty-state" style="padding:30px 10px">${icon('clipboard-off', 18)}<p style="margin-top:8px">目前沒有訂單</p></div>`;
@@ -318,36 +322,39 @@ function renderOrderColumn(container, orders, colType) {
   // 分成待處理（未出貨）和已出貨兩組
   const pending = orders.filter(o => !o.shippedAt);
   const shipped = orders.filter(o => !!o.shippedAt);
-  const shippedVisible = shipped.slice(0, 10);
-  const shippedHidden = shipped.slice(10);
 
   let html = '';
 
-  // 待處理訂單（全部顯示）
+  // 待處理訂單（全部顯示）——這才是每天要處理的東西
   if (pending.length > 0) {
     html += pending.map(order => renderOrderCard(order)).join('');
   }
 
-  // 已出貨訂單（只顯示10筆，超過的摺疊）
+  // 已出貨訂單預設「全部收起來」，只留一行可以點開的標題。
+  // 原本會先攤開 10 筆，但單子累積到幾十筆之後，光是已出貨的就把畫面拉得很長，
+  // 待處理的訂單反而被擠到看不到，日常操作很不方便
   if (shipped.length > 0) {
+    const isOpen = shippedExpanded.has(colType);
     html += `<div style="border-top:1.5px dashed var(--c-blush); margin:12px 0 10px; padding-top:10px">
-      <div style="font-size:11px; color:var(--c-rose-text); margin-bottom:8px; display:flex; align-items:center; gap:6px">
-        ${icon('check', 12)} 已出貨（${shipped.length} 筆）
+      <button id="shipped-toggle-${colType}"
+        style="width:100%; display:flex; align-items:center; gap:6px; background:var(--c-cream); border:0.5px dashed var(--c-rose); color:var(--c-rose-text); border-radius:8px; padding:9px 12px; font-size:12px; cursor:pointer">
+        <span>${icon(isOpen ? 'chevron-down' : 'chevron-right', 14)}</span>
+        <span>${icon('check', 13)} 已出貨（${shipped.length} 筆）</span>
+        <span style="margin-left:auto">${isOpen ? '點此收起' : '點此展開'}</span>
+      </button>
+      <div id="shipped-list-${colType}" style="display:${isOpen ? 'block' : 'none'}; margin-top:8px">
+        ${shipped.map(order => renderOrderCard(order)).join('')}
       </div>
-      ${shippedVisible.map(order => renderOrderCard(order)).join('')}
-      ${shippedHidden.length > 0 ? `
-        <div id="shipped-more-${colType}" style="display:none">
-          ${shippedHidden.map(order => renderOrderCard(order)).join('')}
-        </div>
-        <button onclick="toggleShippedMore('${colType}')" id="shipped-toggle-${colType}"
-          style="width:100%; background:var(--c-cream); border:0.5px dashed var(--c-rose); color:var(--c-rose-text); border-radius:8px; padding:8px; font-size:12px; cursor:pointer; margin-top:4px">
-          查看更多已出貨訂單（還有 ${shippedHidden.length} 筆）
-        </button>
-      ` : ''}
     </div>`;
   }
 
   container.innerHTML = html;
+
+  document.getElementById(`shipped-toggle-${colType}`)?.addEventListener('click', () => {
+    if (shippedExpanded.has(colType)) shippedExpanded.delete(colType);
+    else shippedExpanded.add(colType);
+    renderOrderColumn(container, orders, colType);
+  });
 
   // 綁定所有訂單事件
   orders.forEach(order => {
@@ -361,14 +368,6 @@ function renderOrderColumn(container, orders, colType) {
       detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
     });
   });
-}
-
-function toggleShippedMore(colType) {
-  const moreEl = document.getElementById(`shipped-more-${colType}`);
-  const btn = document.getElementById(`shipped-toggle-${colType}`);
-  const isHidden = moreEl.style.display === 'none';
-  moreEl.style.display = isHidden ? 'block' : 'none';
-  btn.textContent = isHidden ? '收起已出貨訂單' : `查看更多已出貨訂單（還有 ${moreEl.querySelectorAll('[id^="toggle-order-"]').length} 筆）`;
 }
 
 function renderOrderCard(order) {

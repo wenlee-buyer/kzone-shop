@@ -250,7 +250,20 @@ function renderPurchasingList() {
     const sum = sumStyles(allStyles, pMap);
     const isOpen = purchasingState.expanded.has(g.catId);
 
-    const productsHtml = g.products.map(p => {
+    // 商品層也要把「已經買齊的」排到最下面，不能只排款式。
+    // 不挑款的商品各自是獨立的一張卡片，只排款式的話它們會卡在清單中間，
+    // 採買時視線得一直跳過已完成的項目
+    const sortedProducts = [...g.products].sort((a, b) => {
+      const aLeft = sumStyles(a.styles, pMap).shortage;
+      const bLeft = sumStyles(b.styles, pMap).shortage;
+      const aDone = aLeft === 0 ? 1 : 0;
+      const bDone = bLeft === 0 ? 1 : 0;
+      if (aDone !== bDone) return aDone - bDone;   // 沒買齊的排前面
+      if (aLeft !== bLeft) return bLeft - aLeft;   // 都沒買齊時，缺得多的排前面
+      return a.name.localeCompare(b.name);          // 完全一樣時用名稱排，順序才不會每次重繪都跳動
+    });
+
+    const productsHtml = sortedProducts.map(p => {
       // 只有一個款式、而且那個款式沒有名字（不挑款商品）時，不用多一層 └ 的縮排，
       // 直接把數量和輸入框放在商品那一行就好
       const singleNoStyle = p.styles.length === 1 && !p.styles[0].style;
