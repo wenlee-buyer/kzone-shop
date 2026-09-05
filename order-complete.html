@@ -13,6 +13,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>訂單已送出｜K.Zone 日韓代購</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 .complete-wrap {
   min-height: 100vh;
@@ -73,6 +74,19 @@
   font-size: 14px; font-weight: 700;
   text-align: center; text-decoration: none;
 }
+#orderImageCanvas { padding: 24px; background: var(--c-bg); width: 420px; }
+.oi-header { text-align: center; padding-bottom: 16px; border-bottom: 2px solid var(--c-coffee); margin-bottom: 16px; }
+.oi-title { font-size: 22px; font-weight: 700; color: var(--c-coffee); }
+.oi-sub { font-size: 12px; color: var(--c-rose-text); margin-top: 4px; }
+.oi-item { display: flex; gap: 10px; padding: 10px 0; border-bottom: 0.5px solid var(--c-blush); align-items: center; }
+.oi-img { width: 50px; height: 50px; border-radius: 8px; overflow: hidden; flex-shrink: 0; background: var(--c-cream); display:flex; align-items:center; justify-content:center;}
+.oi-img img { width: 100%; height: 100%; object-fit: cover; }
+.oi-name { font-size: 13px; font-weight: 700; color: var(--c-coffee); }
+.oi-meta { font-size: 11px; color: var(--c-rose-text); margin-top: 2px; }
+.oi-price { font-size: 13px; font-weight: 700; color: var(--c-orange); margin-left: auto; white-space: nowrap; }
+.oi-total { display: flex; justify-content: space-between; padding-top: 14px; margin-top: 6px; border-top: 2px solid var(--c-coffee); font-size: 17px; font-weight: 700; color: var(--c-coffee); }
+.oi-customer { background: var(--c-cream); border-radius: 10px; padding: 10px 12px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); }
+.oi-footer { text-align: center; font-size: 10px; color: var(--c-rose-text); margin-top: 16px; }
 .trademark-notice {
   margin-top: 32px;
   font-size: 10px; color: var(--c-rose-text);
@@ -91,11 +105,12 @@
   </div>
 
   <div class="complete-title">訂單已送出！</div>
+  <!-- 這裡的預設文字只是還沒讀到訂單資料前的暫時內容，會被 JS 依訂單類型換掉。
+       刻意寫得中性、不提預購或現貨，因為萬一 JS 沒跑到（例如客人直接開這個網址），
+       客人會直接看到這段文字——之前寫成預購現貨混在一起，客人看了會更困惑 -->
   <div class="complete-sub" id="completeSub">
     感謝您的訂購 🍄<br>
-    <strong>請立即點選下方連結私訊官方確認訂單與訂金</strong><br>
-    小編確認商品後<br>
-    會盡快告知您預計到貨日期
+    正在載入訂單資訊...
   </div>
 
   <div class="notice-box" id="orderNoBox" style="display:none; text-align:center">
@@ -106,11 +121,16 @@
   <div class="notice-box">
     <h3>📋 訂單注意事項</h3>
     <p id="orderNoticeText">
-      ・ 預購商品需等小編確認後才算成立<br>
-      ・ 現貨商品以實際庫存為準，若缺貨會主動通知<br>
-      ・ 如有任何問題，請透過下方 LINE 官方帳號聯繫小編<br>
-      ・ 請保存訂單圖片，方便對照確認
+      ・ 如有任何問題，請透過下方 LINE 官方帳號聯繫小編
     </p>
+  </div>
+
+  <div id="downloadOrderWrap" style="display:none; width:100%; max-width:440px; margin-bottom:12px">
+    <button class="btn-line-big" id="downloadOrderImgBtn" style="background:var(--c-coffee)">
+      <span class="ico" data-icon="download" data-size="20"></span>
+      下載訂單圖片
+    </button>
+    <p style="font-size:11px; color:var(--c-rose-text); line-height:1.7; margin-top:8px; text-align:center" id="downloadOrderHint"></p>
   </div>
 
   <div class="line-btn-wrap">
@@ -132,24 +152,154 @@
 
 </div>
 
+<div id="orderImageCanvas" style="position:absolute; left:-9999px; top:0"></div>
+
 <script src="firebase-config.js"></script>
 <script src="assets/icons.js"></script>
 <script src="assets/common.js"></script>
 <script>
+// 讀不到這次結帳的訂單資料時顯示的內容。
+// 重點是不要讓客人以為下單失敗——訂單早就寫進資料庫了，
+// 只是這個瀏覽器分頁手上沒有那份暫存資料而已（例如直接輸入網址進來）。
+function showNoOrderDataFallback() {
+  document.getElementById('completeSub').innerHTML = `
+    感謝您的訂購 🍄<br>
+    <strong>您的訂單已經送出</strong><br>
+    本頁沒有取得這次的訂單明細<br>
+    可用下方「查詢出貨狀態」輸入編號查看
+  `;
+  document.getElementById('orderNoticeText').innerHTML = `
+    ・ 訂單已經成立，小編查得到您的訂單，請放心<br>
+    ・ 若忘記訂單編號，請私訊 LINE 官方小編協助查詢<br>
+    ・ 如有任何問題，請透過下方 LINE 官方帳號聯繫小編
+  `;
+}
+
+// 顯示「下載訂單圖片」按鈕，並依訂單類型給不同的提醒文字。
+// 圖片改在這一頁由客人自己按按鈕產生，不在結帳頁自動下載，原因有兩個：
+//   1. 手機瀏覽器常擋掉自動下載，客人會拿不到圖
+//   2. 更重要的是——之前截圖排在「寫入訂單」之前，手機下載失敗會讓整個結帳中斷，
+//      訂單根本沒寫進資料庫。現在訂單早就成立了，下載失敗頂多是少一張圖
+function setupOrderImageDownload(lastOrder) {
+  if (!lastOrder.items || lastOrder.items.length === 0) return;
+
+  const wrap = document.getElementById('downloadOrderWrap');
+  const btn = document.getElementById('downloadOrderImgBtn');
+  const hint = document.getElementById('downloadOrderHint');
+  wrap.style.display = 'block';
+
+  hint.innerHTML = (lastOrder.orderType === 'preorder' || lastOrder.orderType === 'homeDelivery')
+    ? '請務必下載／截圖後傳給 LINE 官方小編<br>商品有任何問題方便直接與您聯繫'
+    : '訂單已經成立，可下載訂單圖片留存<br>任何內容要修正可私訊小編';
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '產生中...';
+    try {
+      await buildAndDownloadOrderImage(lastOrder);
+      btn.textContent = '✓ 已下載（可再按一次）';
+    } catch (err) {
+      console.error('產生訂單圖片失敗:', err);
+      // 圖片失敗不影響訂單，講清楚讓客人不要以為下單失敗
+      btn.textContent = '產生失敗，請改用截圖';
+      hint.innerHTML = `圖片產生失敗，但<strong>訂單已經成立</strong>，請直接截圖本頁的訂單編號傳給小編即可`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+// 產生訂單圖片並讓客人下載。
+// 這個動作一定要由客人「點按鈕」觸發：手機瀏覽器（尤其 iOS Safari）
+// 會擋掉程式自動發起的下載，但使用者主動點擊的下載成功率高很多。
+async function buildAndDownloadOrderImage(o) {
+  const canvas = document.getElementById('orderImageCanvas');
+  const cart = o.items || [];
+  const lineName = o.lineName || '';
+  const orderNo = o.orderNo || '';
+  const shippingInfo = { name: o.cvsName, phone: o.cvsPhone, storeName: o.cvsStoreName, store: o.cvsStore, address: o.address, hasHomeDelivery: o.hasHomeDelivery };
+  const couponInfo = (o.discount > 0) ? { code: o.couponCode, discount: o.discount } : null;
+  const settings = { siteName: o.siteName, siteSubtitle: o.siteSubtitle, watermarkText: o.watermarkText };
+  const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const discount = couponInfo?.discount || 0;
+  const shipping = o.shipping || 0;
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  canvas.innerHTML = `
+    <div class="oi-header">
+      <div class="oi-title">${escapeHtml(settings.siteName)}</div>
+      <div class="oi-sub">${escapeHtml(settings.siteSubtitle)}</div>
+      <div class="oi-sub">訂單編號：${escapeHtml(orderNo)}</div>
+    </div>
+    ${cart.map(item => `
+      <div class="oi-item">
+        <div class="oi-img">${item.image ? `<img src="${escapeHtml(item.image)}" crossorigin="anonymous">` : ''}</div>
+        <div>
+          <div class="oi-name">${escapeHtml(item.name)}</div>
+          <div class="oi-meta">${item.style ? `款式：${escapeHtml(item.style)} ・ ` : ''}數量：${item.qty}</div>
+        </div>
+        <div class="oi-price">${formatPrice(item.price * item.qty)}</div>
+      </div>
+    `).join('')}
+    ${discount > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name" style="color:var(--c-orange)">優惠碼折抵（${escapeHtml(couponInfo.code)}）</div><div class="oi-price">-${formatPrice(discount)}</div></div>` : ''}
+    ${shipping > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name">運費${shippingInfo?.hasHomeDelivery ? '（宅配）' : ''}</div><div class="oi-price">${formatPrice(shipping)}</div></div>` : ''}
+    <div class="oi-total"><span>${shippingInfo?.hasHomeDelivery ? '應付總額（含運費）' : '商品合計'}</span><span>${formatPrice(total - discount + shipping)}</span></div>
+    <div class="oi-customer">
+      ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
+      ${shippingInfo?.hasHomeDelivery ? '收件人' : '取件人'}：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
+      ${shippingInfo?.hasHomeDelivery
+        ? `收件地址：${escapeHtml(shippingInfo?.address || '')}`
+        : `取貨門市：${escapeHtml(shippingInfo?.storeName || '')}${shippingInfo?.store ? `（${escapeHtml(shippingInfo.store)}）` : ''}`}
+    </div>
+    <div class="oi-footer">訂單產生時間：${dateStr}　${escapeHtml(settings.watermarkText)}</div>
+  `;
+
+  // 等待所有圖片載入完成（或失敗），避免截圖時圖片還沒準備好
+  const imgEls = canvas.querySelectorAll('img');
+  await Promise.all(Array.from(imgEls).map(img => {
+    if (img.complete) return Promise.resolve();
+    return new Promise(resolve => {
+      img.onload = resolve;
+      img.onerror = resolve;
+      setTimeout(resolve, 3000); // 最多等3秒，避免卡住
+    });
+  }));
+
+  const renderedCanvas = await html2canvas(canvas, {
+    backgroundColor: '#efeeee',
+    scale: 2,
+    useCORS: true,
+    allowTaint: true
+  });
+
+  const link = document.createElement('a');
+  link.download = `K.Zone訂單_${orderNo}_${lineName}.png`;
+  link.href = renderedCanvas.toDataURL('image/png');
+  link.click();
+}
+
+
+
 async function init() {
   const btn = document.getElementById('lineOfficialBtn');
   let lineUrlFromSession = '';
 
-  // 讀取剛剛結帳產生的訂單編號/類型（只用一次就清除，避免重整頁面又顯示舊資料）。
+  // 讀取剛剛結帳產生的訂單資料。
   // 這一段刻意寫在最前面、而且不用 await：客人結帳完是直接被導頁過來的，
   // 通常會迫不及待馬上點「聯繫 LINE 官方小編」，如果按鈕的連結要等 Firestore 讀完設定才會生效，
   // 手機網路稍微慢一點客人就會點到還沒設定好的連結（href="#"，點了完全沒反應）。
   // 所以優先直接用結帳頁那邊已經讀好、隨著這筆訂單一起帶過來的連結，讓按鈕一開始就是可以點的。
+  //
+  // 注意：這裡「不會」讀完就把資料刪掉。
+  // 原本讀完立刻刪除（想避免重整頁面看到舊訂單），結果客人只要重新整理、
+  // 或從 LINE 切回瀏覽器時分頁被重載，就會看到一個沒有訂單編號、
+  // 而且預購現貨混在一起的預設畫面，反而以為下單失敗。
+  // 資料留著並不會有舊訂單的問題——下一次結帳會直接覆蓋掉這個 key。
   try {
     const raw = sessionStorage.getItem('kzone_last_order');
     if (raw) {
       const lastOrder = JSON.parse(raw);
-      sessionStorage.removeItem('kzone_last_order');
 
       if (lastOrder.lineOfficialUrl) {
         lineUrlFromSession = lastOrder.lineOfficialUrl;
@@ -164,17 +314,19 @@ async function init() {
         document.getElementById('orderNoText').textContent = lastOrder.orderNo;
       }
 
+      setupOrderImageDownload(lastOrder);
+
       if (lastOrder.orderType === 'cvs') {
         document.getElementById('completeSub').innerHTML = `
           感謝您的訂購 🍄<br>
-          現貨商品都會在2天內出貨<br>
-          請截圖此結帳訂單編號<br>
-          有任何問題將此編號發送給LINE官方小編
+          <strong>訂單已經成立</strong>，現貨商品都會在2天內出貨<br>
+          可下載訂單圖片留存<br>
+          任何內容要修正可私訊小編
         `;
         document.getElementById('orderNoticeText').innerHTML = `
           ・ 現貨商品將於2天內安排出貨<br>
-          ・ 如有任何問題，請將訂單編號截圖發送給 LINE 官方小編<br>
-          ・ 請保存本頁訂單編號，方便對照確認
+          ・ 可按本頁「下載訂單圖片」留存，方便日後對照<br>
+          ・ 內容要修正或有任何問題，請私訊 LINE 官方小編
         `;
       } else if (lastOrder.orderType === 'homeDelivery') {
         document.getElementById('completeSub').innerHTML = `
@@ -185,27 +337,32 @@ async function init() {
         `;
         document.getElementById('orderNoticeText').innerHTML = `
           ・ 此訂單商品需宅配，恕無法超商取貨付款<br>
-          ・ 請私訊 LINE 官方小編取得匯款帳號並完成轉帳<br>
+          ・ 請務必下載／截圖訂單圖片後傳給 LINE 官方小編<br>
+          ・ 請私訊小編取得匯款帳號並完成轉帳<br>
           ・ 轉帳確認後我們才會安排出貨，請耐心等候小編回覆<br>
           ・ 請保存本頁訂單編號，方便對照確認
         `;
       } else if (lastOrder.orderType === 'preorder') {
         document.getElementById('completeSub').innerHTML = `
           感謝您的訂購 🍄<br>
-          <strong>請將剛剛下載的訂單圖片傳送給官方小編確認訂單與訂金</strong><br>
-          小編確認商品後<br>
-          會盡快告知您預計到貨日期
+          此訂單為預購商品，官方小編會告知訂金匯款帳號<br>
+          <strong>請務必下載／截圖訂單圖片後傳給 LINE 官方小編</strong><br>
+          確認訂單後會盡快告知您預計到貨日期
         `;
         document.getElementById('orderNoticeText').innerHTML = `
-          ・ 預購商品需將訂單圖片傳送給小編，並經確認後才算成立<br>
-          ・ 若尚未傳送圖片，請點選下方按鈕聯繫官方小編<br>
-          ・ 確認訂金與到貨日期以小編回覆為準<br>
-          ・ 請保存訂單圖片，方便對照確認
+          ・ 需傳圖給小編、訂金付款完成後才算成立<br>
+          ・ 圖片請按本頁的「下載訂單圖片」按鈕取得，或直接截圖本頁<br>
+          ・ 訂金與到貨日期以小編回覆為準
         `;
       }
+    } else {
+      // 完全讀不到訂單資料（客人直接打開這個網址、或瀏覽器不允許 sessionStorage）。
+      // 這種情況下絕對不能留著預設文字讓客人猜，要明確告訴他訂單查得到、去哪裡查
+      showNoOrderDataFallback();
     }
   } catch (e) {
-    console.error('讀取訂單編號失敗:', e);
+    console.error('讀取訂單資料失敗:', e);
+    showNoOrderDataFallback();
   }
 
   // sessionStorage 沒有帶連結時才需要額外連 Firestore 補（例如客人直接打開這個網址，

@@ -15,7 +15,6 @@
 <link rel="stylesheet" href="style.css">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 .cart-page { padding: 12px 16px 200px; max-width: 560px; margin: 0 auto; }
 .cart-item { background: #fff; border-radius: 12px; border: 0.5px solid var(--c-blush); padding: 12px; display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-start; }
@@ -43,19 +42,6 @@
 .coupon-applied button { background: none; border: none; color: var(--c-rose-text); font-size: 12px; text-decoration: underline; }
 .ct-discount { color: var(--c-orange) !important; }
 
-#orderImageCanvas { padding: 24px; background: var(--c-bg); width: 420px; }
-.oi-header { text-align: center; padding-bottom: 16px; border-bottom: 2px solid var(--c-coffee); margin-bottom: 16px; }
-.oi-title { font-size: 22px; font-weight: 700; color: var(--c-coffee); }
-.oi-sub { font-size: 12px; color: var(--c-rose-text); margin-top: 4px; }
-.oi-item { display: flex; gap: 10px; padding: 10px 0; border-bottom: 0.5px solid var(--c-blush); align-items: center; }
-.oi-img { width: 50px; height: 50px; border-radius: 8px; overflow: hidden; flex-shrink: 0; background: var(--c-cream); display:flex; align-items:center; justify-content:center;}
-.oi-img img { width: 100%; height: 100%; object-fit: cover; }
-.oi-name { font-size: 13px; font-weight: 700; color: var(--c-coffee); }
-.oi-meta { font-size: 11px; color: var(--c-rose-text); margin-top: 2px; }
-.oi-price { font-size: 13px; font-weight: 700; color: var(--c-orange); margin-left: auto; white-space: nowrap; }
-.oi-total { display: flex; justify-content: space-between; padding-top: 14px; margin-top: 6px; border-top: 2px solid var(--c-coffee); font-size: 17px; font-weight: 700; color: var(--c-coffee); }
-.oi-customer { background: var(--c-cream); border-radius: 10px; padding: 10px 12px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); }
-.oi-footer { text-align: center; font-size: 10px; color: var(--c-rose-text); margin-top: 16px; }
 </style>
 </head>
 <body>
@@ -74,7 +60,6 @@
   <div class="loading-wrap"><div class="spin"></div>讀取購物車中...</div>
 </div>
 
-<div id="orderImageCanvas" style="position:absolute; left:-9999px; top:0"></div>
 
 <script src="firebase-config.js"></script>
 <script src="assets/icons.js"></script>
@@ -274,67 +259,6 @@ function removeItem(idx) {
   render();
 }
 
-async function generateAndDownloadOrderImage(cart, lineName, orderNo, shippingInfo, couponInfo, shippingFee) {
-  const canvas = document.getElementById('orderImageCanvas');
-  const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const discount = couponInfo?.discount || 0;
-  const shipping = shippingFee || 0;
-  const now = new Date();
-  const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
-  canvas.innerHTML = `
-    <div class="oi-header">
-      <div class="oi-title">${escapeHtml(settings.siteName)}</div>
-      <div class="oi-sub">${escapeHtml(settings.siteSubtitle)}</div>
-      <div class="oi-sub">訂單編號：${escapeHtml(orderNo)}</div>
-    </div>
-    ${cart.map(item => `
-      <div class="oi-item">
-        <div class="oi-img">${item.image ? `<img src="${escapeHtml(item.image)}" crossorigin="anonymous">` : ''}</div>
-        <div>
-          <div class="oi-name">${escapeHtml(item.name)}</div>
-          <div class="oi-meta">${item.style ? `款式：${escapeHtml(item.style)} ・ ` : ''}數量：${item.qty}</div>
-        </div>
-        <div class="oi-price">${formatPrice(item.price * item.qty)}</div>
-      </div>
-    `).join('')}
-    ${discount > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name" style="color:var(--c-orange)">優惠碼折抵（${escapeHtml(couponInfo.code)}）</div><div class="oi-price">-${formatPrice(discount)}</div></div>` : ''}
-    ${shipping > 0 ? `<div class="oi-item" style="border-bottom:none"><div class="oi-name">運費${shippingInfo?.hasHomeDelivery ? '（宅配）' : ''}</div><div class="oi-price">${formatPrice(shipping)}</div></div>` : ''}
-    <div class="oi-total"><span>${shippingInfo?.hasHomeDelivery ? '應付總額（含運費・請私訊小編匯款）' : '商品合計（預購最終金額以小編確認為準）'}</span><span>${formatPrice(total - discount + shipping)}</span></div>
-    <div class="oi-customer">
-      ${icon('user', 18)}LINE 名稱：${escapeHtml(lineName)}<br>
-      ${shippingInfo?.hasHomeDelivery ? '收件人' : '取件人'}：${escapeHtml(shippingInfo?.name || '')}・${escapeHtml(shippingInfo?.phone || '')}<br>
-      ${shippingInfo?.hasHomeDelivery
-        ? `收件地址：${escapeHtml(shippingInfo?.address || '')}`
-        : `取貨門市：${escapeHtml(shippingInfo?.storeName || '')}${shippingInfo?.store ? `（${escapeHtml(shippingInfo.store)}）` : ''}`}
-    </div>
-    <div class="oi-footer">訂單產生時間：${dateStr}　${escapeHtml(settings.watermarkText)}</div>
-  `;
-
-  // 等待所有圖片載入完成（或失敗），避免截圖時圖片還沒準備好
-  const imgEls = canvas.querySelectorAll('img');
-  await Promise.all(Array.from(imgEls).map(img => {
-    if (img.complete) return Promise.resolve();
-    return new Promise(resolve => {
-      img.onload = resolve;
-      img.onerror = resolve;
-      setTimeout(resolve, 3000); // 最多等3秒，避免卡住
-    });
-  }));
-
-  const renderedCanvas = await html2canvas(canvas, {
-    backgroundColor: '#efeeee',
-    scale: 2,
-    useCORS: true,
-    allowTaint: true
-  });
-
-  const link = document.createElement('a');
-  link.download = `K.Zone訂單_${orderNo}_${lineName}.png`;
-  link.href = renderedCanvas.toDataURL('image/png');
-  link.click();
-}
-
 // ============================================
 // 取貨資訊表單（現貨與預購共用；預購送出後會再產生訂單圖片並開啟 LINE）
 // ============================================
@@ -497,11 +421,6 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       throw stockErr;
     }
 
-    if (hasPreorder) {
-      btn.textContent = '產生圖片中...';
-      await generateAndDownloadOrderImage(cart, lineName, orderNo, { name, phone, storeName, store, address, hasHomeDelivery }, discount > 0 ? { code: appliedCouponCode, discount } : null, shipping);
-    }
-
     btn.textContent = '送出中...';
     await db.collection(COL.ORDERS).add({
       orderType: hasPreorder ? 'line' : 'cvs',
@@ -545,19 +464,38 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
     refreshCartBadge();
     overlay.remove();
 
+    // 把這張訂單的完整內容帶到結帳完成頁。
+    // 訂單截圖改在那一頁由客人自己按按鈕產生，不在這裡自動下載——
+    // 手機瀏覽器（尤其 iOS Safari）常常擋掉「程式自動下載」，但由使用者點擊觸發的下載成功率高很多。
+    // 而且訂單此時已經寫進資料庫了，就算客人沒下載圖，後台一樣查得到，不會有訂單消失的風險。
     sessionStorage.setItem('kzone_last_order', JSON.stringify({
       orderNo,
       orderType: hasHomeDelivery ? 'homeDelivery' : (hasPreorder ? 'preorder' : 'cvs'),
       // 把已經讀好的 LINE 連結一起帶過去，讓結帳完成頁不需要再重新跟 Firestore 要一次資料，
       // 客人一到頁面就能立刻點「聯繫 LINE 官方小編」，不用等網路回應（這是客人反映按了沒反應的主因）
       lineOfficialUrl: settings.lineOfficialUrl || '',
-      lineOfficialId: settings.lineOfficialId || ''
+      lineOfficialId: settings.lineOfficialId || '',
+      // 產生訂單截圖需要的資料
+      siteName: settings.siteName || '',
+      siteSubtitle: settings.siteSubtitle || '',
+      watermarkText: settings.watermarkText || '',
+      items: cart,
+      lineName,
+      cvsName: name,
+      cvsPhone: phone,
+      cvsStore: store,
+      cvsStoreName: storeName,
+      address,
+      hasHomeDelivery,
+      subtotal,
+      discount,
+      couponCode: appliedCouponCode,
+      shipping,
+      total
     }));
 
     if (hasPreorder) {
-      // 預購一定要提醒客人「主動把剛剛下載的圖片傳過去」，不然很多人開了LINE聊天室卻忘記真的送出圖片，
-      // 官方帳號那邊完全收不到，就一直卡在等待確認的狀態
-      showToast('訂單圖片已下載！請務必將圖片傳送給官方小編確認');
+      showToast('訂單已送出！請至完成頁下載訂單圖片並傳給小編');
       setTimeout(() => {
         window.open(normalizeExternalUrl(settings.lineOfficialUrl), '_blank');
         location.href = 'order-complete.html';
