@@ -93,6 +93,7 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
         const idx2 = items.findIndex(i => i.id === item.id);
         items.splice(idx2, 1);
         await reloadCoreData();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
         renderList();
         showToast('已刪除');
       });
@@ -127,6 +128,7 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
     await batch.commit();
 
     await reloadCoreData();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
     renderList();
   }
 
@@ -144,6 +146,7 @@ function renderTaxonomyPage({ title, subtitle, collectionName, items, itemLabel,
     await db.collection(collectionName).doc(newId).set({ name: newItem.name, order: newItem.order });
     items.push(newItem);
     await reloadCoreData();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
     input.value = '';
     renderList();
     showToast(`已新增${itemLabel}：${name}`);

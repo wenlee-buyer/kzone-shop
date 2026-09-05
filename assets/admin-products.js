@@ -32,6 +32,7 @@ async function renderProductsPage() {
           <option value="all">全部來源分類</option>
         </select>
         <button class="btn-secondary" id="saveProductOrderBtn" style="width:auto">儲存排序</button>
+        <button class="btn-secondary" id="rebuildCatalogBtn" style="width:auto" title="前台是讀「商品目錄快照」來省流量。正常情況下改商品時會自動重建，萬一前台顯示的內容跟後台對不上，可以手動按這個">同步到前台</button>
         <span style="font-size:11px; color:var(--c-rose-text)">拖拉列表最左側的把手即可調整順序（首頁精選排序請到「首頁排序」頁面）</span>
       </div>
       <div id="productsTableWrap">
@@ -53,6 +54,21 @@ async function renderProductsPage() {
   });
 
   document.getElementById('saveProductOrderBtn').addEventListener('click', saveProductRowOrder);
+  document.getElementById('rebuildCatalogBtn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = '同步中...';
+    try {
+      const count = await rebuildCatalog();
+      showToast(`已同步 ${count} 個商品到前台`);
+    } catch (err) {
+      console.error(err);
+      showToast('同步失敗，請稍後再試');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '同步到前台';
+    }
+  });
   document.getElementById('addProductBtn').addEventListener('click', () => openProductEditor(null));
   document.getElementById('toggleArchivedBtn').addEventListener('click', (e) => {
     productsPageState.filterArchived = !productsPageState.filterArchived;
@@ -187,6 +203,8 @@ function renderProductRow(p) {
 async function toggleArchiveProduct(p) {
   await db.collection(COL.PRODUCTS).doc(p.id).update({ archived: !p.archived });
   showToast(p.archived ? '已取消封存' : '商品已封存，前台將不再顯示');
+  // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
+  await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
   loadAndRenderProductsTable();
 }
 
@@ -194,6 +212,8 @@ async function deleteProductPermanently(p) {
   if (!confirm(`確定要永久刪除「${p.name}」嗎？此動作無法復原。`)) return;
   await db.collection(COL.PRODUCTS).doc(p.id).delete();
   showToast('商品已永久刪除');
+  // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
+  await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
   loadAndRenderProductsTable();
 }
 
@@ -269,6 +289,7 @@ async function saveProductRowOrder() {
       }
     });
     await batch.commit();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
     showToast('排序已儲存');
     await loadAndRenderProductsTable();
   } catch (err) {
@@ -829,9 +850,8 @@ async function saveProduct(styles) {
       }
     }
 
-    // 商品有異動時清掉前台快取，讓你自己的瀏覽器立刻看到新資料
-    //（客人那邊的快取最多 3 分鐘就會自己過期）
-    clearStorefrontCache();
+    // 商品有異動：重建前台目錄快照，並清掉自己瀏覽器的快取
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
     closeProductEditor();
     loadAndRenderProductsTable();
 

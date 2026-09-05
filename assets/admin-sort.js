@@ -213,6 +213,7 @@ async function saveSortOrder() {
       batch.update(db.collection(COL.PRODUCTS).doc(id), { sortOrder: idx + 1 });
     });
     await batch.commit();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
 
     showToast('順序已儲存，前台商品將依此排序顯示');
 
