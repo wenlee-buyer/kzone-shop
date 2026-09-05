@@ -140,7 +140,7 @@ async function loadAndRenderFailedOrders() {
 // 所以這裡直接用同一份資料重建訂單，不用請客人重新下單一次。
 async function restoreFailedOrder(f) {
   const itemCount = (f.items || []).reduce((s, i) => s + (i.qty || 0), 0);
-  if (!confirm(`要用這筆紀錄建立正式訂單嗎？\n\n客人：${f.lineName || '未提供'}\n商品：共 ${itemCount} 件\n金額：${formatPrice(f.total || 0)}\n\n建立後這筆紀錄會標記為已處理。`)) return;
+  if (!confirm(`要用這筆紀錄建立正式訂單嗎？\n\n客人：${f.lineName || '未提供'}\n商品：共 ${itemCount} 件\n金額：${formatPrice(f.total || 0)}\n\n訂單建立後，這筆失敗紀錄會自動移除（訂單會出現在上方列表）。`)) return;
 
   try {
     // 補回來的商品項目要帶著現貨/預購狀態，採購清單才算得出正確需求。
@@ -196,7 +196,10 @@ async function restoreFailedOrder(f) {
       }
     }
 
-    await db.collection(COL.FAILED_ORDERS).doc(f.id).update({ resolved: true });
+    // 訂單已經建立成功了，這筆失敗紀錄就完成任務了，直接刪掉。
+    // 不留成「已處理」的原因：那張單已經在訂單列表裡，紀錄再留著等於同一張單出現兩次，
+    // 對帳時會分不清哪個才是真的。刪除排在訂單建立成功之後，所以不會有資料遺失的風險
+    await db.collection(COL.FAILED_ORDERS).doc(f.id).delete();
 
     invalidateOrdersCache();
     showToast(`已補成訂單 ${f.orderNo || ''}${stockWarning}`);
