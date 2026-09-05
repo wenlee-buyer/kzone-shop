@@ -139,16 +139,18 @@ async function init() {
     return;
   }
 
-  const [settingsData, catSnap, tagSnap, prodDoc] = await Promise.all([
+  // 分類/標籤走快取（客人逐一點開商品時，這兩組資料每次都一樣，沒必要重讀）。
+  // 商品本身仍然即時讀取單一筆，這樣客人看到的價格與庫存才是最新的
+  const [settingsData, catList, tagList, prodDoc] = await Promise.all([
     getSettings(),
-    db.collection(COL.CATEGORIES).get(),
-    db.collection(COL.TAGS).get(),
+    fetchCategoriesCached(),
+    fetchTagsCached(),
     db.collection(COL.PRODUCTS).doc(id).get()
   ]);
 
   settings = settingsData;
-  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
-  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  categories = [...catList].sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
+  tags = tagList;
 
   if (!prodDoc.exists) {
     document.getElementById('content').innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}找不到此商品，可能已被下架</div>`;
@@ -166,6 +168,19 @@ async function init() {
 async function recordProductView(product) {
   const today = new Date();
   const dateKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  // 同一個瀏覽階段內、同一個商品只記錄一次。
+  // 原本是每次開啟頁面就寫一筆，客人來回點同一個商品、或按上一頁再進來都會重複計數，
+  // 除了灌水之外也很吃 Firestore 的每日寫入額度（免費方案一天 2 萬次，額度爆掉會讓結帳失敗）。
+  // 改成一個瀏覽階段算一次，數字反而更接近「多少人看過」
+  const viewKey = `kzone_viewed_${dateKey}_${product.id}`;
+  try {
+    if (sessionStorage.getItem(viewKey)) return;
+    sessionStorage.setItem(viewKey, '1');
+  } catch (e) {
+    // sessionStorage 不可用時就照舊記錄，不影響功能
+  }
+
   const statRef = db.collection('kzone_stats').doc(`${dateKey}_${product.id}`);
   await statRef.set({
     productId: product.id,

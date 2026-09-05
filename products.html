@@ -98,14 +98,15 @@ async function init() {
   await ensureDefaultData();
   refreshCartBadge();
 
-  const [settingsData, catSnap, tagSnap] = await Promise.all([
+  // 走快取版本，避免每次換頁都把整組分類/標籤重讀一次（Firestore 免費額度有限）
+  const [settingsData, catList, tagList] = await Promise.all([
     getSettings(),
-    db.collection(COL.CATEGORIES).orderBy('order').get(),
-    db.collection(COL.TAGS).orderBy('order').get()
+    fetchCategoriesCached(),
+    fetchTagsCached()
   ]);
   settings = settingsData;
-  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  categories = catList;
+  tags = tagList;
 
   // 支援從商品詳情頁的分類列點過來（例如 products.html?cat=xxx），一進頁面就先選好該分類
   const urlParams = new URLSearchParams(location.search);
@@ -221,8 +222,9 @@ function renderTagFilters() {
 
 async function loadProducts() {
   try {
-    const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
-    allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // 走快取版本：連線期間客人會反覆在列表與商品頁之間切換，
+    // 每次都重讀全部商品會很快把 Firestore 免費額度用完
+    allProducts = await fetchProductsCached();
     filterAndRender();
   } catch (err) {
     console.error(err);

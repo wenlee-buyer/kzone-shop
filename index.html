@@ -143,15 +143,16 @@ async function init() {
   await ensureDefaultData();
   refreshCartBadge();
 
-  const [settingsData, catSnap, tagSnap] = await Promise.all([
+  // 走快取版本，避免客人每點一頁就把整組分類/標籤重讀一次（Firestore 免費額度有限）
+  const [settingsData, catList, tagList] = await Promise.all([
     getSettings(),
-    db.collection(COL.CATEGORIES).orderBy('order').get(),
-    db.collection(COL.TAGS).orderBy('order').get()
+    fetchCategoriesCached(),
+    fetchTagsCached()
   ]);
 
   settings = settingsData;
-  categories = catSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  tags = tagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  categories = catList;
+  tags = tagList;
 
   // 支援直接分享某個分類的網址（例如 index.html?cat=xxx），一進首頁就先選好該分類，
   // 網址列也要能反映目前選的分類，這樣客人才能把網址複製傳出去給別人
@@ -259,11 +260,10 @@ function renderTagFilters() {
 
 async function loadProducts() {
   try {
-    // 不加 limit：首頁「全部」現在會完整顯示所有精選商品，避免商品數一多就被截斷
-    const snap = await db.collection(COL.PRODUCTS)
-      .where('archived', '==', false)
-      .get();
-    allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // 不加 limit：首頁「全部」現在會完整顯示所有精選商品，避免商品數一多就被截斷。
+    // 走快取版本：連線期間客人會在首頁/列表/商品頁之間來回點，
+    // 每次都重讀全部商品會很快把 Firestore 免費額度用完，額度爆掉連結帳都會失敗
+    allProducts = await fetchProductsCached();
     filterAndRender();
   } catch (err) {
     console.error(err);

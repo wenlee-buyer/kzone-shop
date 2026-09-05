@@ -122,11 +122,12 @@ async function ensureDefaultData() {
 // 讀取網站設定
 async function getSettings() {
   try {
-    const doc = await db.collection(COL.SETTINGS).doc('main').get();
-    if (doc.exists) {
-      return { ...DEFAULT_SETTINGS, ...doc.data() };
-    }
-    return DEFAULT_SETTINGS;
+    // 網站設定幾乎不會變，但每一頁都要用（站名、LINE 連結、行銷跑馬燈…），
+    // 走快取可以省下大量重複讀取
+    return await cachedFetch('settings', CACHE_TTL.SETTINGS, async () => {
+      const doc = await db.collection(COL.SETTINGS).doc('main').get();
+      return doc.exists ? { ...DEFAULT_SETTINGS, ...doc.data() } : DEFAULT_SETTINGS;
+    });
   } catch (err) {
     console.error('讀取設定失敗:', err);
     return DEFAULT_SETTINGS;
@@ -163,6 +164,79 @@ function saveCart(cart) {
 
 function clearCart() {
   localStorage.removeItem(CART_KEY);
+}
+
+// ============================================
+// 前台讀取快取
+// ============================================
+// 為什麼需要：Firestore 免費方案每天只有 5 萬次讀取，而前台每開一次商品列表頁，
+// 就會把「全部商品 + 全部分類 + 全部標籤」整組重讀一遍。假設有 100 個商品，
+// 一次瀏覽就是 110 次讀取，連線期間客人來回點幾頁就會把額度燒完，
+// 額度一爆連結帳都會失敗（Firestore 會直接回傳 Quota exceeded）。
+//
+// 快取存在 sessionStorage：只在這個分頁的這次瀏覽有效，客人關掉重開就會拿到新資料，
+// 也不會污染別人的裝置。庫存顯示可能會有幾分鐘的落差，但這是安全的——
+// 真正的庫存把關在結帳時的交易裡（deductStockForOrder 會用當下最新資料再檢查一次），
+// 不會因為看到舊庫存就超賣。
+const CACHE_TTL = {
+  PRODUCTS: 3 * 60 * 1000,   // 商品 3 分鐘：庫存會變，抓短一點
+  TAXONOMY: 30 * 60 * 1000,  // 分類/標籤 30 分鐘：幾乎不會變
+  SETTINGS: 30 * 60 * 1000   // 網站設定 30 分鐘
+};
+
+async function cachedFetch(cacheKey, ttlMs, fetchFn) {
+  const storageKey = `kzone_cache_${cacheKey}`;
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (Date.now() - cached.at < ttlMs) return cached.data;
+    }
+  } catch (e) {
+    // sessionStorage 讀不到或內容壞掉時直接當作沒有快取，不要影響正常流程
+  }
+
+  const data = await fetchFn();
+
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify({ at: Date.now(), data }));
+  } catch (e) {
+    // 空間不足（例如商品很多、圖片網址很長）時就放棄快取，功能照常運作
+  }
+  return data;
+}
+
+// 清掉前台快取。後台改完商品/分類後可以呼叫，讓自己的瀏覽器立刻看到新資料
+function clearStorefrontCache() {
+  try {
+    Object.keys(sessionStorage)
+      .filter(k => k.startsWith('kzone_cache_'))
+      .forEach(k => sessionStorage.removeItem(k));
+  } catch (e) {
+    // 清不掉也沒關係，快取本來就會自己過期
+  }
+}
+
+// 前台共用的讀取函式：全部走快取，避免每次換頁都重讀整個資料庫
+async function fetchProductsCached() {
+  return cachedFetch('products', CACHE_TTL.PRODUCTS, async () => {
+    const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
+}
+
+async function fetchCategoriesCached() {
+  return cachedFetch('categories', CACHE_TTL.TAXONOMY, async () => {
+    const snap = await db.collection(COL.CATEGORIES).orderBy('order').get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
+}
+
+async function fetchTagsCached() {
+  return cachedFetch('tags', CACHE_TTL.TAXONOMY, async () => {
+    const snap = await db.collection(COL.TAGS).orderBy('order').get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
 }
 
 // 取得商品的所有來源分類ID（相容新格式 categoryIds 陣列與舊格式 categoryId 字串）
