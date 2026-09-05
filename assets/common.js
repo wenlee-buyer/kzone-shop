@@ -525,10 +525,22 @@ async function deductStockForOrder(cartItems) {
 
 // ---- 預購採購清單相關 ----
 
-// 每個「商品+款式」在採購進度表裡的固定 doc id。
-// 用固定 id（而不是自動 id + 兩個 where 條件查詢）是為了避免 Firestore 需要額外建立複合索引。
-// 斜線在 Firestore 的 doc id 裡有特殊意義（會被當成路徑分隔），所以要換掉。
-function purchaseDocId(productId, style) {
+// 採購進度的固定 doc id。
+//
+// 這裡刻意用「商品名稱」而不是商品 ID 當作依據，因為採購時你是按「東西」去買的，
+// 不是按資料庫 ID 買的。實際遇過的狀況：同一個商品因為誤以為壞掉而重新建了一個，
+// 兩個商品名稱一樣但 ID 不同，用 ID 分組的話採購單上會出現兩筆一模一樣的名稱，
+// 需求量被拆開，很容易看漏或少買。用名稱分組就會自動合併成一筆。
+//
+// 副作用：改商品名稱會產生新的 key，已採購數字要重新輸入（不會影響需求量的計算）。
+// 斜線在 Firestore 的 doc id 裡是路徑分隔符號，一定要換掉。
+function purchaseDocId(productName, style) {
+  const safe = (s) => String(s || '').replace(/\//g, '-').trim();
+  return `${safe(productName)}__${safe(style)}`;
+}
+
+// 舊版的 key（用商品 ID）。只用來把先前輸入過的已採購數字接回來，不再產生新的
+function legacyPurchaseDocId(productId, style) {
   return `${productId}__${(style || '').replace(/\//g, '-')}`;
 }
 
@@ -551,16 +563,21 @@ function buildPurchaseDemand(orders) {
     if (order.shippedAt) continue;
     for (const item of (order.items || [])) {
       if (!isPreorderOrderItem(order, item)) continue;
-      const key = purchaseDocId(item.productId, item.style);
+      // 以「名稱＋款式」分組，同名商品（例如不小心重複建立的）會自動合併成一筆
+      const key = purchaseDocId(item.name, item.style);
       if (!map[key]) {
         map[key] = {
           key,
-          productId: item.productId,
+          productId: item.productId,   // 拿來查商品所屬分類用（同名商品取第一個遇到的）
+          productIds: [],              // 這一筆實際包含哪些商品 ID，用來接回舊的已採購數字
           style: item.style || '',
           name: item.name || '',
           needed: 0,
           orders: []
         };
+      }
+      if (item.productId && !map[key].productIds.includes(item.productId)) {
+        map[key].productIds.push(item.productId);
       }
       map[key].needed += (item.qty || 0);
       map[key].orders.push({
@@ -582,11 +599,12 @@ async function adjustPurchasedForOrder(order, direction) {
   const items = (order.items || []).filter(item => isPreorderOrderItem(order, item));
   if (items.length === 0) return;
 
-  // 同一個款式在訂單裡可能拆成多行，先加總再一次調整，避免同一份文件被重複讀寫
+  // 同一個款式在訂單裡可能拆成多行，先加總再一次調整，避免同一份文件被重複讀寫。
+  // key 必須跟採購單顯示時用的一樣（名稱＋款式），否則出貨扣帳會扣到別筆去
   const merged = {};
   for (const item of items) {
-    const key = purchaseDocId(item.productId, item.style);
-    if (!merged[key]) merged[key] = { productId: item.productId, style: item.style || '', qty: 0 };
+    const key = purchaseDocId(item.name, item.style);
+    if (!merged[key]) merged[key] = { productName: item.name || '', style: item.style || '', qty: 0 };
     merged[key].qty += (item.qty || 0);
   }
 
@@ -598,7 +616,7 @@ async function adjustPurchasedForOrder(order, direction) {
         const current = doc.exists ? (doc.data().purchased || 0) : 0;
         const next = Math.max(0, current + (direction * info.qty));
         tx.set(ref, {
-          productId: info.productId,
+          productName: info.productName,
           style: info.style,
           purchased: next,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()

@@ -10,6 +10,9 @@ async function renderOrdersPage() {
         <div class="admin-title">訂單列表</div>
         <div class="admin-subtitle">客人送出的訂單紀錄（需自行至 LINE 官方帳號核對截圖確認）</div>
       </div>
+      <div class="admin-btn-row">
+        <button class="btn-primary" id="addManualOrderBtn" style="width:auto">+ 手動新增訂單</button>
+      </div>
     </div>
 
     <div class="admin-card">
@@ -82,6 +85,7 @@ async function renderOrdersPage() {
   document.getElementById('exportStartDate').value = today;
   document.getElementById('exportEndDate').value = today;
   document.getElementById('exportOrdersBtn').addEventListener('click', exportOrdersToExcel);
+  document.getElementById('addManualOrderBtn').addEventListener('click', createManualOrder);
 
   await loadAndRenderOrders();
   await loadAndRenderFailedOrders();
@@ -132,6 +136,67 @@ async function loadAndRenderFailedOrders() {
   } catch (err) {
     console.error(err);
     wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入失敗紀錄失敗</div>`;
+  }
+}
+
+// 手動新增一張空白訂單，建立後直接打開編輯視窗讓你填內容。
+// 用途：客人把購物車截圖傳給你（例如網站額度用盡下不了單、或客人手機出問題），
+// 你照著截圖把品項和收件資料 key 進去，存檔後再把後台訂單畫面截圖回傳給客人確認。
+//
+// 為什麼是「先建立空白單再用既有編輯視窗」而不是做一個全新的表單：
+// 編輯訂單的視窗已經有完整功能（挑商品、改單價與數量、現貨/預購、收件資料、金額試算），
+// 重做一份不但費工，兩邊的金額計算邏輯還可能不一致而算出不同的總額。
+async function createManualOrder() {
+  const lineName = prompt('客人的 LINE 名稱（可留空，之後在編輯視窗補）：');
+  if (lineName === null) return; // 按了取消
+
+  const btn = document.getElementById('addManualOrderBtn');
+  btn.disabled = true;
+  btn.textContent = '建立中...';
+
+  try {
+    const today = new Date();
+    const orderDateStr = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+
+    const docRef = await db.collection(COL.ORDERS).add({
+      orderType: 'cvs',
+      deliveryMethod: 'cvs',
+      orderNo: genOrderNo(),
+      lineName: (lineName || '').trim(),
+      cvsName: '',
+      cvsPhone: '',
+      cvsStore: '',
+      cvsStoreName: '',
+      address: '',
+      paymentConfirmed: null,
+      items: [],
+      subtotal: 0,
+      couponCode: null,
+      discountAmount: 0,
+      manualDiscount: 0,
+      depositReceived: 0,
+      shippingFee: 0,
+      total: 0,
+      orderDate: orderDateStr,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      // 標記是手動建立的，日後對帳時分得出來哪些不是客人自己下的
+      manuallyCreated: true
+    });
+
+    // 重新讀一次是為了拿到伺服器寫好的 createdAt，編輯視窗和訂單卡片都會用到
+    const doc = await db.collection(COL.ORDERS).doc(docRef.id).get();
+    const order = { id: doc.id, ...doc.data() };
+
+    invalidateOrdersCache();
+    await loadAndRenderOrders();
+    showToast('已建立空白訂單，請填入商品與收件資料');
+    openEditOrderModal(order);
+  } catch (err) {
+    console.error('手動新增訂單失敗:', err);
+    showToast('建立失敗，請稍後再試');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '+ 手動新增訂單';
   }
 }
 
@@ -433,7 +498,6 @@ function renderOrderCard(order) {
     </div>
   ` : (order.cvsName ? `
     <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:10px; font-size:12px; color:var(--c-coffee); line-height:1.8">
-      （預購客人已預填取貨資訊，供小編確認參考，最終以 LINE 溝通為準）<br>
       ${recipientLine}<br>
       商品小計：${formatPrice(order.subtotal)}${couponLine}${manualDiscountLine} ・ 預估運費：${order.shippingFee === 0 ? '免運' : formatPrice(order.shippingFee)} ・ 預估總額：${formatPrice(order.total)}${depositLine}
       ${isHomeDelivery ? `<br>轉帳狀態：${isPaymentConfirmed ? '✅ 已匯款' : '⏳ 待轉帳（客人需私訊取得匯款帳號）'}` : ''}
@@ -682,9 +746,22 @@ function openEditOrderModal(order) {
 }
 
 function closeEditOrderModal() {
+  const order = editOrderState.order;
+
   document.getElementById('editOrderModalOverlay')?.remove();
   editOrderState.order = null;
   editOrderState.items = [];
+
+  // 手動新增的空白訂單如果沒填任何商品就被關掉，代表是按錯或改變主意了，
+  // 直接清掉，不然訂單列表會慢慢累積一堆金額 0、沒有內容的空單
+  if (order && order.manuallyCreated && (order.items || []).length === 0) {
+    db.collection(COL.ORDERS).doc(order.id).delete()
+      .then(() => {
+        invalidateOrdersCache();
+        loadAndRenderOrders();
+      })
+      .catch(err => console.error('清除空白訂單失敗:', err));
+  }
 }
 
 function renderEditOrderItems() {
@@ -1001,6 +1078,11 @@ async function saveEditedOrder() {
       address: newAddress,
       lastEditedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    // 把存檔後的內容同步回這份快照。這一行很重要：
+    // closeEditOrderModal() 會把「手動新增但沒有商品」的空白單清掉，
+    // 如果這裡不更新，剛剛才填好商品存檔的訂單會因為快照還是空的而被誤刪
+    order.items = normalizedItems;
 
     showToast('訂單已更新');
     closeEditOrderModal();

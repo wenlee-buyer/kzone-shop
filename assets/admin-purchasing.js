@@ -75,9 +75,24 @@ async function loadAndRenderPurchasing() {
 
     purchasingState.demand = buildPurchaseDemand(orders);
 
-    purchasingState.purchasedMap = {};
+    const allPurchases = {};
     purchaseSnap.docs.forEach(d => {
-      purchasingState.purchasedMap[d.id] = d.data().purchased || 0;
+      allPurchases[d.id] = d.data().purchased || 0;
+    });
+
+    // 採購進度改成用「名稱＋款式」記錄（同名商品才會合併成一筆）。
+    // 但先前輸入過的數字是用「商品ID＋款式」存的，這裡把它們接回來，
+    // 不然改版後你之前打的已採購數量會全部歸零、得重新輸入一次
+    purchasingState.purchasedMap = {};
+    purchasingState.demand.forEach(d => {
+      if (allPurchases[d.key] !== undefined) {
+        purchasingState.purchasedMap[d.key] = allPurchases[d.key];
+        return;
+      }
+      const legacySum = (d.productIds || [])
+        .map(pid => allPurchases[legacyPurchaseDocId(pid, d.style)] || 0)
+        .reduce((a, b) => a + b, 0);
+      purchasingState.purchasedMap[d.key] = legacySum;
     });
 
     purchasingState.productMap = {};
@@ -374,7 +389,7 @@ function renderPurchasingList() {
 
       try {
         await db.collection(COL.PURCHASES).doc(key).set({
-          productId: item.productId,
+          productName: item.name,
           style: item.style,
           purchased: value,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
