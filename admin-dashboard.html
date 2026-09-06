@@ -37,6 +37,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
     <option value="categories">來源分類</option>
     <option value="tags">角色標籤</option>
     <option value="orders">訂單列表</option>
+    <option value="picking">備貨頁</option>
     <option value="coupons">優惠碼</option>
     <option value="imagedownload">圖片下載</option>
     <option value="stats">流量統計</option>
@@ -56,6 +57,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
     <div class="admin-nav-item" data-page="tags"><span class="ico" data-icon="hash" data-size="18"></span>角色標籤</div>
     <div class="admin-nav-item" data-page="orders"><span class="ico" data-icon="clipboard-list" data-size="18"></span>訂單列表</div>
     <div class="admin-nav-item" data-page="purchasing"><span class="ico" data-icon="package" data-size="18"></span>預購採購單</div>
+    <div class="admin-nav-item" data-page="picking"><span class="ico" data-icon="clipboard-list" data-size="18"></span>備貨頁</div>
     <div class="admin-nav-item" data-page="coupons"><span class="ico" data-icon="tag" data-size="18"></span>優惠碼</div>
     <div class="admin-nav-item" data-page="imagedownload"><span class="ico" data-icon="download" data-size="18"></span>圖片下載</div>
     <div class="admin-nav-item" data-page="stats"><span class="ico" data-icon="chart-bar" data-size="18"></span>流量統計</div>
@@ -78,6 +80,7 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
 <script src="assets/admin-categories.js"></script>
 <script src="assets/admin-orders.js"></script>
 <script src="assets/admin-purchasing.js"></script>
+<script src="assets/admin-picking.js"></script>
 <script src="assets/admin-coupons.js"></script>
 <script src="assets/admin-image-download.js"></script>
 <script src="assets/admin-sort.js"></script>
@@ -115,6 +118,7 @@ const PAGE_RENDERERS = {
   tags: renderTagsPage,
   orders: renderOrdersPage,
   purchasing: renderPurchasingPage,
+  picking: renderPickingPage,
   coupons: renderCouponsPage,
   imagedownload: renderImageDownloadPage,
   stats: renderStatsPage,
