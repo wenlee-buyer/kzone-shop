@@ -534,8 +534,17 @@ async function deductStockForOrder(cartItems) {
 //
 // 副作用：改商品名稱會產生新的 key，已採購數字要重新輸入（不會影響需求量的計算）。
 // 斜線在 Firestore 的 doc id 裡是路徑分隔符號，一定要換掉。
+// 統一商品名稱寫法，避免「看起來一樣」但字元其實不同的重複商品被拆成兩筆
+// （例如全形／半形括號、多個空白、前後空白）。
+function normalizeProductNameForKey(s) {
+  return String(s || '')
+    .trim()
+    .replace(/\s+/g, ' ')       // 多個空白（含全形空白）收斂成一個半形空白
+    .replace(/[（）]/g, m => (m === '（' ? '(' : ')')); // 全形括號轉半形，跟半形括號合併
+}
+
 function purchaseDocId(productName, style) {
-  const safe = (s) => String(s || '').replace(/\//g, '-').trim();
+  const safe = (s) => normalizeProductNameForKey(s).replace(/\//g, '-');
   return `${safe(productName)}__${safe(style)}`;
 }
 
