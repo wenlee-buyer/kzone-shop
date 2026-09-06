@@ -200,6 +200,19 @@ async function createManualOrder() {
   }
 }
 
+// 把失敗紀錄裡每一項的現貨/預購狀態，換成「現在」商品實際的設定。
+// 為什麼要這樣做：失敗紀錄存的是「客人當初加入購物車那一刻」的狀態，
+// 如果那之後你把商品改成現貨（或改成預購），舊快照不會自動跟著更新，
+// 補單時如果照舊快照建立，就會出現「明明已經是現貨了，卻還被當預購」的錯帳。
+// 商品被刪除、查不到現在資料時，才退回用舊快照的值（沒有更準的資料可用）
+function deriveStockTypeFromProducts(items, productMap) {
+  return items.map(item => {
+    const product = productMap[item.productId];
+    if (!product) return item; // 商品已刪除，沿用舊快照
+    return { ...item, stockType: getStyleStockType(product, item.style) };
+  });
+}
+
 // 把一筆結帳失敗紀錄補成正式訂單。
 // 客人當初確實下過單、資料也都留著了，只是因為額度用盡或連線問題沒寫進資料庫，
 // 所以這裡直接用同一份資料重建訂單，不用請客人重新下單一次。
@@ -208,9 +221,8 @@ async function restoreFailedOrder(f) {
   if (!confirm(`要用這筆紀錄建立正式訂單嗎？\n\n客人：${f.lineName || '未提供'}\n商品：共 ${itemCount} 件\n金額：${formatPrice(f.total || 0)}\n\n訂單建立後，這筆失敗紀錄會自動移除（訂單會出現在上方列表）。`)) return;
 
   try {
-    // 補回來的商品項目要帶著現貨/預購狀態，採購清單才算得出正確需求。
-    // 舊的失敗紀錄沒有存這個欄位，就退回用整筆訂單的預購與否來判斷
-    const items = (f.items || []).map(i => ({
+    // 補回來的商品項目先照失敗紀錄的快照組出來（現貨/預購狀態等一下會用「現在」的商品資料重新對過一次）
+    const rawItems = (f.items || []).map(i => ({
       productId: i.productId || '',
       name: i.name || '',
       style: i.style || '',
@@ -220,6 +232,27 @@ async function restoreFailedOrder(f) {
       stockType: i.stockType || (f.hasPreorder ? 'preorder' : 'instock'),
       deliveryMethod: i.deliveryMethod || (f.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs')
     }));
+
+    // 跟客人結帳時一樣，補單這一刻也重新讀一次商品現況：
+    // 1. 現貨/預購狀態改用現在的設定，不再照失敗當下的舊快照
+    // 2. 庫存不足或已售完要先讓你知道，你可以自己決定要不要照樣建立訂單
+    const productIds = [...new Set(rawItems.map(i => i.productId).filter(Boolean))];
+    const productDocs = await Promise.all(productIds.map(pid => db.collection(COL.PRODUCTS).doc(pid).get().catch(() => null)));
+    const productMap = {};
+    productDocs.forEach((doc, idx) => {
+      if (doc && doc.exists) productMap[productIds[idx]] = { id: doc.id, ...doc.data() };
+    });
+
+    const items = deriveStockTypeFromProducts(rawItems, productMap);
+
+    const stockProblems = await validateCartStock(items);
+    if (stockProblems) {
+      const proceed = confirm(
+        `重新核對庫存後發現問題：\n\n${stockProblems.join('\n')}\n\n仍要照樣建立這張訂單嗎？\n（建議先確認貨源，或取消後到商品管理調整庫存/現貨預購設定再重試）`
+      );
+      if (!proceed) return;
+    }
+
     const anyPreorder = items.some(i => i.stockType === 'preorder');
 
     const createdAt = f.createdAt?.toDate ? f.createdAt.toDate() : new Date();
