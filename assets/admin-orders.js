@@ -491,7 +491,7 @@ function renderOrderCard(order) {
 
   const shippedPill = isShipped
     ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已出貨</span>`
-    : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待處理</span>`;
+    : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待出貨</span>`;
 
   // 訂金主要是預購訂單在用（尾款要等出貨前才收），不是超商取貨/貨到付款訂單，所以只在非cvs訂單顯示
   const depositReceivedNum = order.depositReceived || 0;
