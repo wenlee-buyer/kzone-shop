@@ -465,6 +465,18 @@ function renderOrderColumn(container, orders, colType) {
       const detail = document.getElementById(`detail-order-${order.id}`);
       detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
     });
+    // 備註離開欄位（blur）就自動存檔，不用另外按儲存按鈕，才符合「客人講的當下隨手記」的使用情境
+    document.getElementById(`note-order-${order.id}`)?.addEventListener('change', async (e) => {
+      const value = e.target.value.trim();
+      try {
+        await db.collection(COL.ORDERS).doc(order.id).update({ note: value });
+        order.note = value;
+        e.target.style.background = value ? '#fff9e6' : '#fff';
+      } catch (err) {
+        console.error(err);
+        showToast('備註儲存失敗，請稍後再試');
+      }
+    });
   });
 }
 
@@ -476,6 +488,10 @@ function renderOrderCard(order) {
   const isHomeDelivery = order.deliveryMethod === 'homeDelivery';
   const isShipped = !!order.shippedAt;
   const isPaymentConfirmed = !!order.paymentConfirmed;
+  // 備貨頁把這張訂單的商品全部核對完、按了「已完成」時會寫 pickingCompleted。
+  // 出貨前這張單在訂單列表要特別標出來，讓你一眼看出「這張可以出貨了」，不用再切去備貨頁確認。
+  // 出貨後這個狀態就沒有意義了（已經出貨），不用再顯示，避免跟已出貨的顏色搶視覺
+  const isPickingCompleted = !!order.pickingCompleted && !isShipped;
 
   const typePill = isHomeDelivery
     ? `<span class="pill" style="background:#e6e0f7; color:#5a4a9c">宅配</span>`
@@ -491,7 +507,9 @@ function renderOrderCard(order) {
 
   const shippedPill = isShipped
     ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 已出貨</span>`
-    : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待出貨</span>`;
+    : (isPickingCompleted
+        ? `<span class="pill" style="background:#d4edda; color:#1a5c2a; margin-left:4px">${icon('check', 14)} 備貨完成</span>`
+        : `<span class="pill" style="background:#fff3cd; color:#856404; margin-left:4px">待出貨</span>`);
 
   // 訂金主要是預購訂單在用（尾款要等出貨前才收），不是超商取貨/貨到付款訂單，所以只在非cvs訂單顯示
   const depositReceivedNum = order.depositReceived || 0;
@@ -537,15 +555,23 @@ function renderOrderCard(order) {
     </div>
   ` : '');
 
+  const cardBorderColor = isShipped ? '#b2dfdb' : (isPickingCompleted ? '#7bc98e' : 'var(--c-blush)');
+  const cardBg = isShipped ? '#f9fffe' : (isPickingCompleted ? '#f6fdf7' : '#fff');
+  const headerBg = isShipped ? '#edfaf6' : (isPickingCompleted ? '#e9f9ec' : 'var(--c-cream)');
+
   return `
-    <div style="border:1.5px solid ${isShipped ? '#b2dfdb' : 'var(--c-blush)'}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${isShipped ? '#f9fffe' : '#fff'}">
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${isShipped ? '#edfaf6' : 'var(--c-cream)'}" id="toggle-order-${order.id}">
+    <div style="border:1.5px solid ${cardBorderColor}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${cardBg}">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${headerBg}" id="toggle-order-${order.id}">
         <div style="flex:1; min-width:0">
           <div style="font-size:13px; font-weight:700; color:var(--c-coffee); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
             ${icon('user', 14)} ${escapeHtml(order.lineName || '未提供')} ${typePill} ${paymentPill} ${depositPill} ${shippedPill}
           </div>
           <div style="font-size:11px; color:var(--c-rose-text); margin-top:3px">
             ${icon('clock', 14)} ${dateStr} ・ 共${itemCount}件 ・ 總額${formatPrice(order.total)}${!isCvs && depositReceivedNum > 0 ? ` ・ 尾款${formatPrice(balanceAmount)}` : ''}${order.orderNo ? ` ・ 編號：${escapeHtml(order.orderNo)}` : ''}
+          </div>
+          <div style="margin-top:6px" onclick="event.stopPropagation()">
+            <textarea id="note-order-${order.id}" placeholder="備註（例如客人許願的款式/顏色，離開欄位自動存檔）" rows="1"
+              style="width:100%; resize:vertical; border:0.5px solid var(--c-rose); border-radius:6px; padding:5px 8px; font-size:12px; color:var(--c-coffee); background:${order.note ? '#fff9e6' : '#fff'}; font-family:inherit">${escapeHtml(order.note || '')}</textarea>
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
