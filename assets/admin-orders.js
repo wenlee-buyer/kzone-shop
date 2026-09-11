@@ -20,23 +20,24 @@ async function renderOrdersPage() {
       <p style="font-size:12px; color:var(--c-rose-text); margin-bottom:12px; line-height:1.7">
         只會匯出「超商取貨」的訂單（宅配訂單不適用賣貨便格式，會自動排除）。<br>
         訂單金額已扣除優惠折抵與已收訂金，也就是超商實際要向客人收的貨款。<br>
+        現貨訂單依日期區間匯出；<strong>預購訂單改成到右邊「含預購訂單」清單裡勾選要匯出哪幾張</strong>（到貨與否跟下單日期無關，用勾的比較準，已在「備貨頁」核對完的訂單會幫你預先勾好）。<br>
         下載後請另存或貼入賣貨便原始 .xlsm 範本中執行「驗證」。為避免重複匯入，請每次匯出後記下匯出區間。
       </p>
       <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; font-size:13px; color:var(--c-coffee)">
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
-          <input type="checkbox" id="exportInstock"> 現貨訂單
+          <input type="checkbox" id="exportInstock"> 現貨訂單（依日期區間）
         </label>
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
-          <input type="checkbox" id="exportPreorder"> 預購訂單
+          <input type="checkbox" id="exportPreorder"> 預購訂單（依右邊清單勾選）
         </label>
       </div>
       <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end">
         <div class="field" style="margin-bottom:0; flex:1; min-width:140px">
-          <label class="field-label">起始日期</label>
+          <label class="field-label">起始日期（僅現貨訂單用）</label>
           <input type="date" id="exportStartDate">
         </div>
         <div class="field" style="margin-bottom:0; flex:1; min-width:140px">
-          <label class="field-label">結束日期</label>
+          <label class="field-label">結束日期（僅現貨訂單用）</label>
           <input type="date" id="exportEndDate">
         </div>
         <button class="btn-primary" id="exportOrdersBtn" style="width:auto; padding:9px 20px">下載匯入檔（.xlsx）</button>
@@ -396,6 +397,8 @@ async function loadAndRenderOrders(forceRefresh) {
 
     console.log(`[訂單診斷] 超商現貨：${cvsOrders.length} 筆 / LINE含預購+宅配：${lineOrders.length} 筆`);
 
+    seedExportPreorderSelection(orders);
+
     renderOrderColumn(cvs, cvsOrders, 'cvs');
     renderOrderColumn(line, lineOrders, 'line');
 
@@ -410,6 +413,28 @@ async function loadAndRenderOrders(forceRefresh) {
 // 記住「已出貨」區塊是不是展開的。存在畫面重繪之外的地方，
 // 這樣標記出貨、編輯訂單之後重畫列表時，展開狀態不會被重設回收起
 const shippedExpanded = new Set();
+
+// ---- 匯出賣貨便：預購訂單改成手動勾選要匯出哪幾張，不再靠日期區間一次全撈 ----
+// 因為預購訂單是不是「真的到貨、可以出貨」跟下單日期沒有關係（可能等了一個月才到貨），
+// 用日期篩選常常會漏掉還沒出貨的舊單，或誤匯到還在等貨的新單，所以改成手動勾選最準確
+let exportPreorderSelection = new Set(); // 目前勾選要匯出的訂單 id
+let exportPreorderSeeded = new Set();    // 記錄哪些訂單已經套用過「預設勾選」，避免每次重繪都把使用者手動取消的勾選打回來
+
+// 一張訂單夠不夠格出現在「勾選匯出」清單裡：要含預購商品、不是宅配（賣貨便格式不支援宅配）、還沒出貨
+function isEligibleForPreorderExport(order) {
+  const hasAnyPreorderItem = (order.items || []).some(item => isPreorderOrderItem(order, item));
+  return hasAnyPreorderItem && order.deliveryMethod !== 'homeDelivery' && !order.shippedAt;
+}
+
+// 第一次看到這張訂單時套用預設值：跟訂單列表的綠色「備貨完成」標記連動，
+// 備貨頁核對過都到齊的訂單，直接幫你先勾起來；其餘的預設不勾，避免東西還沒到貨就被匯出
+function seedExportPreorderSelection(orders) {
+  orders.forEach(o => {
+    if (!isEligibleForPreorderExport(o) || exportPreorderSeeded.has(o.id)) return;
+    exportPreorderSeeded.add(o.id);
+    if (o.pickingCompleted) exportPreorderSelection.add(o.id);
+  });
+}
 
 function renderOrderColumn(container, orders, colType) {
   if (orders.length === 0) {
@@ -476,6 +501,11 @@ function renderOrderColumn(container, orders, colType) {
         console.error(err);
         showToast('備註儲存失敗，請稍後再試');
       }
+    });
+    // 勾選/取消勾選只是改記憶體裡的清單，不用存資料庫，按「下載匯入檔」時才會讀這個清單
+    document.getElementById(`export-pick-${order.id}`)?.addEventListener('change', (e) => {
+      if (e.target.checked) exportPreorderSelection.add(order.id);
+      else exportPreorderSelection.delete(order.id);
     });
   });
 }
@@ -559,6 +589,15 @@ function renderOrderCard(order) {
   const cardBg = isShipped ? '#f9fffe' : (isPickingCompleted ? '#f6fdf7' : '#fff');
   const headerBg = isShipped ? '#edfaf6' : (isPickingCompleted ? '#e9f9ec' : 'var(--c-cream)');
 
+  // 含預購商品、還沒出貨、也不是宅配單的訂單，才需要出現在「匯出賣貨便」的勾選清單裡
+  const eligibleForPreorderExport = isEligibleForPreorderExport(order);
+  const exportCheckboxHtml = eligibleForPreorderExport ? `
+    <label style="display:flex; align-items:center; gap:5px; margin-top:6px; font-size:11px; color:var(--c-coffee); cursor:pointer; width:fit-content" onclick="event.stopPropagation()">
+      <input type="checkbox" id="export-pick-${order.id}" ${exportPreorderSelection.has(order.id) ? 'checked' : ''}>
+      匯出賣貨便時包含這張
+    </label>
+  ` : '';
+
   return `
     <div style="border:1.5px solid ${cardBorderColor}; border-radius:10px; margin-bottom:10px; overflow:hidden; background:${cardBg}">
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; background:${headerBg}" id="toggle-order-${order.id}">
@@ -573,6 +612,7 @@ function renderOrderCard(order) {
             <textarea id="note-order-${order.id}" placeholder="備註（例如客人許願的款式/顏色，離開欄位自動存檔）" rows="1"
               style="width:100%; resize:vertical; border:0.5px solid var(--c-rose); border-radius:6px; padding:5px 8px; font-size:12px; color:var(--c-coffee); background:${order.note ? '#fff9e6' : '#fff'}; font-family:inherit">${escapeHtml(order.note || '')}</textarea>
           </div>
+          ${exportCheckboxHtml}
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px" onclick="event.stopPropagation()">
           ${isHomeDelivery ? `<button class="btn-icon ${isPaymentConfirmed ? '' : 'active-accent'}" id="payment-order-${order.id}" title="${isPaymentConfirmed ? '取消已匯款標記' : '標記已匯款'}" style="font-size:11px; padding:6px 8px">${isPaymentConfirmed ? '取消已匯款' : '標記已匯款'}</button>` : ''}
@@ -1441,14 +1481,33 @@ function calcCodAmount(order) {
   return Math.max(0, subtotal - discount - manual - deposit);
 }
 
+// 挑出這次要匯出的訂單。現貨、預購兩種挑法完全不同，所以分開處理：
+//   現貨：跟以前一樣，依下單日期區間篩選
+//   預購：不看日期，只看「使用者有沒有在畫面上勾選這張」（selectedIds）——
+//         到貨時間跟下單日期沒有關係，用日期篩很容易漏單或多匯到還沒到貨的
+// homeDelivery 一律排除：賣貨便格式不支援宅配
+function selectOrdersForExport({ orders, wantInstock, wantPreorder, startDate, endDate, selectedIds }) {
+  return orders
+    .filter(o => o.deliveryMethod !== 'homeDelivery')
+    .filter(o => {
+      const hasPreorder = (o.items || []).some(item => isPreorderOrderItem(o, item));
+      if (hasPreorder) {
+        return wantPreorder && selectedIds.has(o.id);
+      }
+      if (!wantInstock) return false;
+      const t = o.createdAt?.toDate ? o.createdAt.toDate() : null;
+      return t && t >= startDate && t <= endDate;
+    })
+    .sort((a, b) => {
+      const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return ta - tb;
+    });
+}
+
 async function exportOrdersToExcel() {
   const startDateStr = document.getElementById('exportStartDate').value;
   const endDateStr = document.getElementById('exportEndDate').value;
-
-  if (!startDateStr || !endDateStr) {
-    showToast('請選擇起訖日期');
-    return;
-  }
 
   const wantInstock = document.getElementById('exportInstock').checked;
   const wantPreorder = document.getElementById('exportPreorder').checked;
@@ -1457,41 +1516,43 @@ async function exportOrdersToExcel() {
     return;
   }
 
+  // 日期只有現貨訂單需要，勾預購但沒勾現貨時不用逼使用者選日期
+  if (wantInstock && (!startDateStr || !endDateStr)) {
+    showToast('現貨訂單請選擇起訖日期');
+    return;
+  }
+
+  // 勾了預購卻一張都沒選，多半是忘記去右邊「含預購訂單」清單勾選，先提醒一下比匯出空檔案有意義
+  if (wantPreorder && exportPreorderSelection.size === 0) {
+    showToast('請先到右邊「含預購訂單」清單勾選要匯出的訂單');
+    return;
+  }
+
   const btn = document.getElementById('exportOrdersBtn');
   btn.disabled = true;
   btn.textContent = '匯出中...';
 
   try {
-    const startDate = new Date(startDateStr + 'T00:00:00');
-    const endDate = new Date(endDateStr + 'T23:59:59');
+    const startDate = startDateStr ? new Date(startDateStr + 'T00:00:00') : null;
+    const endDate = endDateStr ? new Date(endDateStr + 'T23:59:59') : null;
 
     // 這裡不能再用 where('orderType','==','cvs') 篩選：那樣只會撈到現貨訂單，
     // 含預購的訂單（orderType='line'）永遠不會被匯出。改成全部撈回來後在前端判斷，
     // 也順便避開「where + orderBy 不同欄位需要建立複合索引」的限制
     const snap = await db.collection(COL.ORDERS).get();
+    const allOrders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    const orders = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      // 宅配訂單不是超商取貨（沒有門市資料、也不是貨到付款），賣貨便格式不適用，一律排除
-      .filter(o => o.deliveryMethod !== 'homeDelivery')
-      // 依勾選決定要現貨還是預購。判斷方式跟採購單一致：
-      // 訂單裡只要有任何一項是預購，整張就算「含預購」
-      .filter(o => {
-        const hasPreorder = (o.items || []).some(item => isPreorderOrderItem(o, item));
-        return hasPreorder ? wantPreorder : wantInstock;
-      })
-      .filter(o => {
-        const t = o.createdAt?.toDate ? o.createdAt.toDate() : null;
-        return t && t >= startDate && t <= endDate;
-      })
-      .sort((a, b) => {
-        const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-        const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-        return ta - tb;
-      });
+    const orders = selectOrdersForExport({
+      orders: allOrders,
+      wantInstock,
+      wantPreorder,
+      startDate,
+      endDate,
+      selectedIds: exportPreorderSelection
+    });
 
     if (orders.length === 0) {
-      showToast('選擇的條件與日期區間內沒有符合的超商取貨訂單');
+      showToast('選擇的條件內沒有符合的超商取貨訂單');
       return;
     }
 
@@ -1521,7 +1582,11 @@ async function exportOrdersToExcel() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '訂單匯入');
 
-    XLSX.writeFile(wb, `K.Zone訂單匯入_${startDateStr}_${endDateStr}.xlsx`);
+    // 只勾預購、沒填日期時，檔名改用「今天」標記，不要讓檔名出現底線接空字串
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+    const fileLabel = (startDateStr && endDateStr) ? `${startDateStr}_${endDateStr}` : todayStr;
+    XLSX.writeFile(wb, `K.Zone訂單匯入_${fileLabel}.xlsx`);
     showToast(`已匯出 ${orders.length} 筆訂單`);
 
   } catch (err) {
