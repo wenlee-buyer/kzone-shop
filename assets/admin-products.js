@@ -33,7 +33,7 @@ async function renderProductsPage() {
         </select>
         <button class="btn-secondary" id="saveProductOrderBtn" style="width:auto">儲存排序</button>
         <button class="btn-secondary" id="rebuildCatalogBtn" style="width:auto" title="前台是讀「商品目錄快照」來省流量。正常情況下改商品時會自動重建，萬一前台顯示的內容跟後台對不上，可以手動按這個">同步到前台</button>
-        <span style="font-size:11px; color:var(--c-rose-text)">拖拉列表最左側的把手即可調整順序（首頁精選排序請到「首頁排序」頁面）</span>
+        <span style="font-size:11px; color:var(--c-rose-text)">直接拖拉商品圖片格子即可調整順序（首頁精選排序請到「首頁排序」頁面）</span>
       </div>
       <div id="productsTableWrap">
         <div class="loading-wrap"><div class="spin"></div>載入商品中...</div>
@@ -119,16 +119,9 @@ async function loadAndRenderProductsTable() {
     }
 
     wrap.innerHTML = `
-      <table class="admin-table">
-        <thead>
-          <tr>
-            <th></th><th>圖片</th><th>名稱</th><th>來源</th><th>狀態</th><th>價格</th><th>款式／庫存</th><th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="productsTableBody">
-          ${products.map(p => renderProductRow(p)).join('')}
-        </tbody>
-      </table>
+      <div class="pg-grid" id="productsGrid">
+        ${products.map((p, idx) => renderProductTile(p, idx)).join('')}
+      </div>
     `;
 
     products.forEach(p => {
@@ -138,7 +131,7 @@ async function loadAndRenderProductsTable() {
       document.getElementById(`delete-${p.id}`)?.addEventListener('click', () => deleteProductPermanently(p));
     });
 
-    initProductRowDragReorder();
+    initProductGridDragReorder();
 
   } catch (err) {
     console.error(err);
@@ -146,7 +139,9 @@ async function loadAndRenderProductsTable() {
   }
 }
 
-function renderProductRow(p) {
+// 跟首頁排序頁一樣，一格就是一個商品：圖片＋名稱＋狀態標籤，下面接編輯等操作按鈕。
+// 拖曳格子本身調整順序，不用再找隱藏的拖曳把手
+function renderProductTile(p, idx) {
   const styles = normalizeStyles(p.styles);
   // 同時相容新格式(categoryIds陣列)和舊格式(categoryId字串)
   const catIds = p.categoryIds && Array.isArray(p.categoryIds) ? p.categoryIds : (p.categoryId ? [p.categoryId] : []);
@@ -160,43 +155,32 @@ function renderProductRow(p) {
     : (p.stockType === 'preorder'
         ? `<span class="pill pill-preorder">預購</span>`
         : `<span class="pill pill-instock">現貨</span>`);
-  const deliveryPill = p.deliveryMethod === 'homeDelivery' ? `<span class="pill" style="background:#e6e0f7;color:#5a4a9c;margin-left:4px">宅配</span>` : '';
-  const archivedPill = p.archived ? `<span class="pill pill-archived" style="margin-left:4px">已封存</span>` : '';
-  const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33;margin-left:4px">已售完</span>` : '';
+  const deliveryPill = p.deliveryMethod === 'homeDelivery' ? `<span class="pill" style="background:#e6e0f7;color:#5a4a9c">宅配</span>` : '';
+  const archivedPill = p.archived ? `<span class="pill pill-archived">已封存</span>` : '';
+  const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33">已售完</span>` : '';
   const img = (p.images && p.images[0]) || '';
-
-  let stockInfo = '不限制';
-  if (styles.length > 0) {
-    stockInfo = styles.map(s => {
-      const soldOut = s.stock !== null && s.stock !== undefined && s.stock <= 0;
-      const stockText = s.stock === null || s.stock === undefined ? '不限' : s.stock;
-      const priceText = s.price !== null && s.price !== undefined ? `・${formatPrice(s.price)}` : '';
-      const styleType = getStyleStockType(p, s.name);
-      const typeText = styleType === 'preorder' ? '・預購' : '・現貨';
-      return `${escapeHtml(s.name)}${soldOut ? '(已售完)' : `：${stockText}`}${priceText}${typeText}`;
-    }).join('<br>');
-  } else if (p.stock !== null && p.stock !== undefined) {
-    stockInfo = `庫存：${p.stock}`;
-  }
+  const isSoldOut = isProductSoldOut(p);
 
   return `
-    <tr draggable="true" data-row-id="${p.id}">
-      <td style="cursor:grab; color:var(--c-rose-text)">${icon('menu', 16)}</td>
-      <td><div style="width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--c-cream)">${img ? `<img src="${escapeHtml(img)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div></td>
-      <td style="max-width:160px; white-space:normal">${escapeHtml(p.name)}</td>
-      <td style="white-space:normal">${catNames.length > 0 ? catNames.map(n => `<span class="pill pill-instock" style="margin:1px 2px; display:inline-block">${escapeHtml(n)}</span>`).join('') : '-'}</td>
-      <td>${stockPill}${deliveryPill}${archivedPill}${soldOutPill}</td>
-      <td>${formatPrice(p.price)}</td>
-      <td style="font-size:11px">${stockInfo}</td>
-      <td>
-        <div style="display:flex; gap:6px; flex-wrap:wrap">
-          <button class="btn-icon" id="edit-${p.id}" title="編輯">編輯</button>
-          <button class="btn-icon" id="duplicate-${p.id}" title="複製商品（照片與推薦文字需重新填寫）">複製</button>
-          <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}">${p.archived ? '取消封存' : '封存'}</button>
-          <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除">刪除</button>
-        </div>
-      </td>
-    </tr>
+    <div class="pg-grid-item" data-id="${p.id}" draggable="true" title="${escapeHtml(p.name)}">
+      <div class="pg-grid-thumb">
+        ${img ? `<img src="${escapeHtml(img)}">` : ''}
+        <div class="pg-grid-num">${idx + 1}</div>
+        ${isSoldOut ? `<div class="pg-grid-soldout">已售完</div>` : ''}
+      </div>
+      <div class="pg-grid-name">${escapeHtml(p.name)}</div>
+      <div class="pg-grid-price">${formatPrice(p.price)}</div>
+      <div class="pg-grid-pills">
+        ${catNames.map(n => `<span class="pill pill-instock">${escapeHtml(n)}</span>`).join('')}
+        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}
+      </div>
+      <div class="pg-grid-actions" onmousedown="event.stopPropagation()">
+        <button class="btn-icon" id="edit-${p.id}" title="編輯" style="font-size:11px; padding:5px 8px">編輯</button>
+        <button class="btn-icon" id="duplicate-${p.id}" title="複製商品（照片與推薦文字需重新填寫）" style="font-size:11px; padding:5px 8px">複製</button>
+        <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}" style="font-size:11px; padding:5px 8px">${p.archived ? '取消封存' : '封存'}</button>
+        <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除" style="font-size:11px; padding:5px 8px">刪除</button>
+      </div>
+    </div>
   `;
 }
 
@@ -237,39 +221,108 @@ function duplicateProduct(p) {
   openProductEditor(clone, { isDuplicate: true });
 }
 
-// ---- 商品列表拖拉排序（取代原本商品編輯視窗裡的排序值輸入框）----
-// 拖完之後要按「儲存排序」才會真的寫入資料庫，跟首頁排序頁面用同一個 sortOrder 欄位
-function initProductRowDragReorder() {
-  const tbody = document.getElementById('productsTableBody');
-  if (!tbody) return;
-  let dragRow = null;
+// ---- 商品格子拖拉排序，跟「首頁排序」頁面同一套手感（含手機觸控）----
+// 拖完之後要按「儲存排序」才會真的寫入資料庫。有選特定分類時存的是該分類專屬排序值，
+// 選「全部來源分類」時沿用首頁排序共用的 sortOrder（saveProductRowOrder 那邊決定要存哪個欄位）
+function initProductGridDragReorder() {
+  const grid = document.getElementById('productsGrid');
+  if (!grid) return;
+  let dragItem = null;
+  let dragOverItem = null;
 
-  tbody.querySelectorAll('tr[data-row-id]').forEach(row => {
-    row.addEventListener('dragstart', () => {
-      dragRow = row;
-      row.style.opacity = '0.4';
+  const renumber = () => {
+    grid.querySelectorAll('.pg-grid-item').forEach((item, idx) => {
+      const num = item.querySelector('.pg-grid-num');
+      if (num) num.textContent = idx + 1;
     });
-    row.addEventListener('dragend', () => {
-      row.style.opacity = '1';
+  };
+
+  grid.querySelectorAll('.pg-grid-item').forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      dragItem = item;
+      item.classList.add('sort-dragging');
+      e.dataTransfer.effectAllowed = 'move';
     });
-    row.addEventListener('dragover', (e) => {
+
+    item.addEventListener('dragend', () => {
+      item.classList.remove('sort-dragging');
+      grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+      dragItem = null;
+      dragOverItem = null;
+      renumber();
+    });
+
+    item.addEventListener('dragover', (e) => {
       e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (item !== dragItem) {
+        grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+        item.classList.add('sort-over');
+        dragOverItem = item;
+      }
     });
-    row.addEventListener('drop', (e) => {
+
+    item.addEventListener('drop', (e) => {
       e.preventDefault();
-      if (!dragRow || dragRow === row) return;
-      const allRows = Array.from(tbody.querySelectorAll('tr[data-row-id]'));
-      const fromIdx = allRows.indexOf(dragRow);
-      const toIdx = allRows.indexOf(row);
-      if (fromIdx < toIdx) row.after(dragRow); else row.before(dragRow);
+      if (dragItem && dragOverItem && dragItem !== dragOverItem) {
+        const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+        const fromIdx = allItems.indexOf(dragItem);
+        const toIdx = allItems.indexOf(dragOverItem);
+        if (fromIdx < toIdx) dragOverItem.after(dragItem);
+        else dragOverItem.before(dragItem);
+      }
+    });
+
+    // 手機觸控：格子式排版同一列有好幾格，要同時比對 X / Y 座標才能正確判斷手指停在哪一格上
+    let touchItem = null;
+
+    item.addEventListener('touchstart', () => {
+      touchItem = item;
+      item.classList.add('sort-dragging');
+    }, { passive: true });
+
+    item.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touchX = e.touches[0].clientX;
+      const touchY = e.touches[0].clientY;
+      const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+      let target = null;
+      for (const i of allItems) {
+        if (i === touchItem) continue;
+        const rect = i.getBoundingClientRect();
+        if (touchX >= rect.left && touchX <= rect.right && touchY >= rect.top && touchY <= rect.bottom) {
+          target = i;
+          break;
+        }
+      }
+      if (target) {
+        grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+        target.classList.add('sort-over');
+        dragOverItem = target;
+      }
+    }, { passive: false });
+
+    item.addEventListener('touchend', () => {
+      if (touchItem && dragOverItem && touchItem !== dragOverItem) {
+        const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+        const fromIdx = allItems.indexOf(touchItem);
+        const toIdx = allItems.indexOf(dragOverItem);
+        if (fromIdx < toIdx) dragOverItem.after(touchItem);
+        else dragOverItem.before(touchItem);
+      }
+      touchItem?.classList.remove('sort-dragging');
+      grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+      renumber();
+      touchItem = null;
+      dragOverItem = null;
     });
   });
 }
 
 async function saveProductRowOrder() {
-  const tbody = document.getElementById('productsTableBody');
-  if (!tbody) return;
-  const orderedIds = Array.from(tbody.querySelectorAll('tr[data-row-id]')).map(r => r.dataset.rowId);
+  const grid = document.getElementById('productsGrid');
+  if (!grid) return;
+  const orderedIds = Array.from(grid.querySelectorAll('.pg-grid-item')).map(r => r.dataset.id);
   if (orderedIds.length === 0) return;
 
   const btn = document.getElementById('saveProductOrderBtn');
