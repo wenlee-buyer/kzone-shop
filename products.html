@@ -94,6 +94,13 @@ let activeTagFilters = new Set();
 let displayCount = 24;
 let searchQuery = '';
 
+// 選了「特定分類」（不是全部、也不是最新上架）時，直接顯示該分類全部商品，不用再按「顯示全部」。
+// 原因：分類是客人主動篩過的明確目標，跟「全部商品」隨便逛不一樣，不該讓他以為這個分類只有 24 樣。
+// 「全部」「最新上架」商品可能很多，維持分頁避免一次載入太多圖片
+function getDisplayCountForFilter(catFilter) {
+  return (catFilter !== 'all' && catFilter !== 'new') ? Infinity : 24;
+}
+
 async function init() {
   // 這裡刻意不呼叫 ensureDefaultData()：那是後台第一次啟用時建立預設資料用的，
   // 前台每位訪客都跑一次等於白花 3 次讀取額度（分類/標籤/設定各檢查一次），
@@ -134,7 +141,7 @@ async function init() {
   }
   document.getElementById('searchQueryInput').addEventListener('input', (e) => {
     searchQuery = e.target.value.trim();
-    displayCount = 24;
+    displayCount = getDisplayCountForFilter(currentCatFilter);
     filterAndRender();
   });
   document.getElementById('searchQueryClearBtn').addEventListener('click', () => {
@@ -142,7 +149,7 @@ async function init() {
     document.getElementById('searchQueryInput').value = '';
     document.getElementById('searchQueryWrap').style.display = 'none';
     document.getElementById('resultCount').textContent = '商品列表';
-    displayCount = 24;
+    displayCount = getDisplayCountForFilter(currentCatFilter);
     filterAndRender();
   });
 
@@ -171,7 +178,7 @@ function renderCategoryNav() {
       btn.classList.add('active');
       currentCatFilter = btn.dataset.cat;
       updateCategoryUrl(currentCatFilter);
-      displayCount = 24;
+      displayCount = getDisplayCountForFilter(currentCatFilter);
       filterAndRender();
     });
   });
@@ -215,7 +222,7 @@ function renderTagFilters() {
           list.querySelector('[data-tag="all"]').classList.add('active');
         }
       }
-      displayCount = 24;
+      displayCount = getDisplayCountForFilter(currentCatFilter);
       filterAndRender();
     });
   });
@@ -225,7 +232,7 @@ function renderTagFilters() {
       document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentStockFilter = btn.dataset.stock;
-      displayCount = 24;
+      displayCount = getDisplayCountForFilter(currentCatFilter);
       filterAndRender();
     });
   });
