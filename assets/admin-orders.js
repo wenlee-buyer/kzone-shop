@@ -1235,6 +1235,17 @@ function mergeOrderItems(orderList) {
   return result;
 }
 
+// 決定併單後要保留哪一張：一律留「最早建立」的那張，不管是從哪張卡片按下「併單」、
+// 也不管勾選了哪幾張一起併。因為預購商品要照先來後到出貨，併單如果保留了比較晚下單的那張，
+// 排隊順序（跟它的訂單編號）就會被打亂，所以這裡不看使用者點的是哪張，一律以時間為準
+function pickMergeKeeper(orders) {
+  return orders.reduce((oldest, o) => {
+    const oldestTime = oldest.createdAt?.toDate ? oldest.createdAt.toDate().getTime() : Date.now();
+    const oTime = o.createdAt?.toDate ? o.createdAt.toDate().getTime() : Date.now();
+    return oTime < oldestTime ? o : oldest;
+  });
+}
+
 // 找出主訂單跟要併進來的訂單之間，有哪些資料不一致需要提醒店家
 function findMergeConflicts(primary, others) {
   const conflicts = [];
@@ -1295,13 +1306,13 @@ async function openMergeOrderModal(primary) {
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:560px">
       <div class="modal-header">
-        <span class="modal-title">併單到 ${escapeHtml(primary.orderNo || '這張訂單')}</span>
+        <span class="modal-title">併單・${escapeHtml(primary.orderNo || '這張訂單')}</span>
         <button class="modal-close" id="closeMergeModal">×</button>
       </div>
       <div class="modal-body">
         <div style="background:var(--c-cream); border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:var(--c-coffee); line-height:1.7">
-          主訂單：<strong>${escapeHtml(primary.lineName || '未提供')}</strong>${primary.orderNo ? `（${escapeHtml(primary.orderNo)}）` : ''}<br>
-          勾選要併進來的訂單，合併後會保留這張的編號與收件資料，被併的訂單會被刪除。
+          目前這張：<strong>${escapeHtml(primary.lineName || '未提供')}</strong>${primary.orderNo ? `（${escapeHtml(primary.orderNo)}）` : ''}<br>
+          勾選要併進來的訂單。<strong>合併後會保留「最早建立」的那張訂單</strong>（編號與收件資料以它為準，先來後到的排隊順序不會被打亂），其餘的會被刪除，勾選後下方會顯示實際保留哪一張。
         </div>
         <div id="mergeCandidateList"><div class="loading-wrap"><div class="spin"></div>載入可併訂單...</div></div>
         <div id="mergePreview"></div>
@@ -1386,12 +1397,24 @@ function renderMergePreview() {
     return;
   }
 
-  const t = calcMergedTotals(mergeState.primary, others);
-  const conflicts = findMergeConflicts(mergeState.primary, others);
+  // 保留哪一張以「最早建立」為準，不一定是你點「併單」的那張，所以每次勾選都要重算一次
+  const allInvolved = [mergeState.primary, ...others];
+  const keeper = pickMergeKeeper(allInvolved);
+  const losers = allInvolved.filter(o => o !== keeper);
+  const keeperChanged = keeper.id !== mergeState.primary.id;
+
+  const t = calcMergedTotals(keeper, losers);
+  const conflicts = findMergeConflicts(keeper, losers);
 
   box.innerHTML = `
+    ${keeperChanged ? `
+      <div style="background:#fff8f5; border:1px solid var(--c-orange); border-radius:8px; padding:10px 12px; margin-top:12px; font-size:12px; color:var(--c-coffee); line-height:1.8">
+        ${icon('info-circle', 14)} 勾選的訂單裡有比較早建立的，<strong>系統會改保留 ${escapeHtml(keeper.orderNo || keeper.lineName || '（無編號）')}</strong>（先來後到，排隊順序不能因為併單被打亂），
+        原本點的 ${escapeHtml(mergeState.primary.orderNo || mergeState.primary.lineName || '（無編號）')} 會被併入並刪除。
+      </div>
+    ` : ''}
     <div style="background:var(--c-cream); border-radius:8px; padding:12px; margin-top:12px; font-size:12px; color:var(--c-coffee); line-height:1.9">
-      <div style="font-weight:700; margin-bottom:6px">合併後預覽（共 ${others.length + 1} 張單）</div>
+      <div style="font-weight:700; margin-bottom:6px">合併後預覽（共 ${others.length + 1} 張單・保留 ${escapeHtml(keeper.orderNo || '（無編號）')}）</div>
       ${t.items.map(i => `${escapeHtml(i.name)}${i.style ? `（${escapeHtml(i.style)}）` : ''} x${i.qty}${i.stockType === 'preorder' ? '　<span style="color:var(--c-orange)">預購</span>' : ''}`).join('<br>')}
       <div style="border-top:0.5px solid var(--c-rose); margin:8px 0 6px"></div>
       商品小計：${formatPrice(t.subtotal)}<br>
@@ -1413,23 +1436,27 @@ function renderMergePreview() {
 }
 
 async function doMergeOrders() {
-  const primary = mergeState.primary;
   const others = mergeState.candidates.filter(o => mergeState.selected.has(o.id));
   if (others.length === 0) return;
 
-  const orderNos = others.map(o => o.orderNo || '(無編號)').join('、');
-  if (!confirm(`確定要把 ${orderNos} 併入 ${primary.orderNo || '這張訂單'} 嗎？\n\n被併入的訂單會被刪除，此動作無法復原。`)) return;
+  // 保留哪一張以「最早建立」為準，跟預覽畫面用同一套邏輯算，不是單純用你點「併單」的那張
+  const allInvolved = [mergeState.primary, ...others];
+  const keeper = pickMergeKeeper(allInvolved);
+  const losers = allInvolved.filter(o => o !== keeper);
+
+  const loserNos = losers.map(o => o.orderNo || '(無編號)').join('、');
+  if (!confirm(`確定要把 ${loserNos} 併入 ${keeper.orderNo || '這張訂單'} 嗎？\n\n（保留最早建立的那張，被併入的訂單會被刪除，此動作無法復原。）`)) return;
 
   const btn = document.getElementById('confirmMergeBtn');
   btn.disabled = true;
   btn.textContent = '併單中...';
 
   try {
-    const t = calcMergedTotals(primary, others);
+    const t = calcMergedTotals(keeper, losers);
 
-    // 先更新主訂單，成功之後才刪除被併的訂單。
+    // 先更新要保留的訂單，成功之後才刪除被併的訂單。
     // 順序很重要：萬一更新失敗，被併的訂單還在，資料不會憑空消失（頂多是併單沒生效，可以重試）
-    await db.collection(COL.ORDERS).doc(primary.id).update({
+    await db.collection(COL.ORDERS).doc(keeper.id).update({
       items: t.items,
       orderType: t.anyPreorder ? 'line' : 'cvs',
       subtotal: t.subtotal,
@@ -1440,17 +1467,17 @@ async function doMergeOrders() {
       total: t.total,
       couponCode: t.couponCode,
       // 留下併單痕跡，日後客人拿舊編號來問時查得到去向
-      mergedFrom: others.map(o => o.orderNo || o.id),
+      mergedFrom: losers.map(o => o.orderNo || o.id),
       mergedAt: firebase.firestore.FieldValue.serverTimestamp(),
       lastEditedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    for (const o of others) {
+    for (const o of losers) {
       await db.collection(COL.ORDERS).doc(o.id).delete();
     }
 
     document.getElementById('mergeOrderModalOverlay')?.remove();
-    showToast(`已併單，保留編號 ${primary.orderNo || ''}`);
+    showToast(`已併單，保留編號 ${keeper.orderNo || ''}`);
     invalidateOrdersCache();
     loadAndRenderOrders();
   } catch (err) {
