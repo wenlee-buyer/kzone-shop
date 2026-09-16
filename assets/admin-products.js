@@ -30,6 +30,7 @@ async function renderProductsPage() {
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center">
         <select id="catFilterSelect" style="border:0.5px solid var(--c-rose); border-radius:8px; padding:8px 10px; font-size:13px; color:var(--c-coffee)">
           <option value="all">全部來源分類</option>
+          <option value="__orphan__">⚠ 分類已被刪除的商品</option>
         </select>
         <button class="btn-secondary" id="saveProductOrderBtn" style="width:auto">儲存排序</button>
         <button class="btn-secondary" id="rebuildCatalogBtn" style="width:auto" title="前台是讀「商品目錄快照」來省流量。正常情況下改商品時會自動重建，萬一前台顯示的內容跟後台對不上，可以手動按這個">同步到前台</button>
@@ -95,7 +96,11 @@ async function loadAndRenderProductsTable() {
     const snap = await query.get();
     let products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    if (productsPageState.filterCat !== 'all') {
+    if (productsPageState.filterCat === '__orphan__') {
+      // 分類被刪除後，商品身上還留著那個查不到主人的分類 ID，平常在「全部來源分類」裡會混在一起很難找，
+      // 這裡專門挑出「掛的分類 ID，沒有一個對得上現在還存在的分類」的商品
+      products = products.filter(p => hasOrphanedCategory(p, appState.categories));
+    } else if (productsPageState.filterCat !== 'all') {
       products = products.filter(p => {
         if (p.categoryIds && Array.isArray(p.categoryIds)) {
           return p.categoryIds.includes(productsPageState.filterCat);
@@ -109,8 +114,11 @@ async function loadAndRenderProductsTable() {
 
     // 依照排序值顯示，讓拖拉調整時看到的順序就是目前實際的順序。
     // 有選特定分類時，用該分類專屬的排序值（同商品掛不同分類可以各自排序）；
-    // 選「全部來源分類」時則用共用的 sortOrder（跟首頁排序頁共用同一個值）。
-    const sortCatId = productsPageState.filterCat !== 'all' ? productsPageState.filterCat : null;
+    // 選「全部來源分類」或「分類已被刪除」時則用共用的 sortOrder（跟首頁排序頁共用同一個值，
+    // 因為「分類已被刪除」這個檢視本來就不對應任何一個真實分類，沒有專屬排序值可以用）
+    const sortCatId = (productsPageState.filterCat !== 'all' && productsPageState.filterCat !== '__orphan__')
+      ? productsPageState.filterCat
+      : null;
     products.sort((a, b) => getCategorySortOrder(a, sortCatId) - getCategorySortOrder(b, sortCatId));
 
     if (products.length === 0) {
@@ -139,6 +147,17 @@ async function loadAndRenderProductsTable() {
   }
 }
 
+// 商品掛的分類 ID，有沒有一個是「查不到本尊」的（分類已經被刪除，但商品身上還留著舊的關聯）。
+// 這是後台商品管理「⚠ 分類已被刪除的商品」篩選要用的判斷式，抽成獨立函式方便測試
+function hasOrphanedCategory(product, categories) {
+  const catIds = product.categoryIds && Array.isArray(product.categoryIds)
+    ? product.categoryIds
+    : (product.categoryId ? [product.categoryId] : []);
+  if (catIds.length === 0) return false; // 完全沒掛分類是另一個問題，不算「分類被刪除」
+  const existingIds = new Set(categories.map(c => c.id));
+  return catIds.some(id => !existingIds.has(id));
+}
+
 // 跟首頁排序頁一樣，一格就是一個商品：圖片＋名稱＋狀態標籤，下面接編輯等操作按鈕。
 // 拖曳格子本身調整順序，不用再找隱藏的拖曳把手
 function renderProductTile(p, idx) {
@@ -158,6 +177,7 @@ function renderProductTile(p, idx) {
   const deliveryPill = p.deliveryMethod === 'homeDelivery' ? `<span class="pill" style="background:#e6e0f7;color:#5a4a9c">宅配</span>` : '';
   const archivedPill = p.archived ? `<span class="pill pill-archived">已封存</span>` : '';
   const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33">已售完</span>` : '';
+  const orphanPill = hasOrphanedCategory(p, appState.categories) ? `<span class="pill" style="background:#fff3cd;color:#856404" title="這個商品掛的分類已經被刪除了，前台分類列找不到它">⚠ 分類已刪除</span>` : '';
   const img = (p.images && p.images[0]) || '';
   const isSoldOut = isProductSoldOut(p);
 
@@ -172,7 +192,7 @@ function renderProductTile(p, idx) {
       <div class="pg-grid-price">${formatPrice(p.price)}</div>
       <div class="pg-grid-pills">
         ${catNames.map(n => `<span class="pill pill-instock">${escapeHtml(n)}</span>`).join('')}
-        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}
+        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${orphanPill}
       </div>
       <div class="pg-grid-actions" onmousedown="event.stopPropagation()">
         <button class="btn-icon" id="edit-${p.id}" title="編輯" style="font-size:11px; padding:5px 8px">編輯</button>
