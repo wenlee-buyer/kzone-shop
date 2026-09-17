@@ -30,7 +30,10 @@
 .dtitle { font-size: 19px; font-weight: 700; color: var(--c-coffee); line-height: 1.4; }
 .dbadges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .dbadge { font-size: 11px; background: var(--c-cream); color: var(--c-coffee); padding: 4px 10px; border-radius: 8px; border: 0.5px solid var(--c-sand); font-weight: 500; }
-.dprice { font-size: 23px; font-weight: 700; color: var(--c-orange); margin-top: 12px; }
+.dprice-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.dprice { font-size: 23px; font-weight: 700; color: var(--c-orange); }
+.dprice.dprice-sale { color: #d92626; }
+.dprice-original { font-size: 15px; color: var(--c-rose-text); text-decoration: line-through; }
 .drec { background: var(--c-cream); border-radius: 10px; padding: 14px; margin-top: 14px; font-size: 13px; color: var(--c-coffee); line-height: 1.7; border-left: 3px solid var(--c-orange); white-space: pre-line; text-align: left; }
 .style-label { font-size: 13px; font-weight: 700; color: var(--c-coffee); margin: 18px 0 8px; }
 .style-opts { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -258,6 +261,7 @@ function render() {
 
   // 混合款式的商品，徽章要看目前選定的款式各自現貨/預購狀態，切換款式時會再更新
   const stockBadgeText = getStyleStockType(product, selectedStyle) === 'preorder' ? '預購' : '現貨';
+  const initialPriceInfo = getEffectivePrice(product, selectedStyle);
 
   const buyAreaHtml = productSoldOut ? `
       <div class="stock-note" style="background:#f1efe8; border-color:var(--c-rose); text-align:center; font-size:13px; font-weight:700; color:var(--c-rose-text); padding:16px">
@@ -285,7 +289,10 @@ function render() {
         ${productCats.map(c => `<span class="dbadge">${escapeHtml(c.name)}</span>`).join('')}
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
-      <div class="dprice" id="dPrice">${formatPrice(getStylePrice(product, selectedStyle))}</div>
+      <div class="dprice-row" id="dPriceRow">
+        ${initialPriceInfo.onSale ? `<span class="dprice-original" id="dPriceOriginal">${formatPrice(initialPriceInfo.original)}</span>` : ''}
+        <div class="dprice ${initialPriceInfo.onSale ? 'dprice-sale' : ''}" id="dPrice">${formatPrice(initialPriceInfo.price)}</div>
+      </div>
       ${product.recommendation ? `<div class="drec">✨ 小編推薦<br>${escapeHtml(product.recommendation)}</div>` : ''}
       ${buyAreaHtml}
     </div>
@@ -330,8 +337,8 @@ function render() {
         selectedStyle = el.dataset.style;
         qty = 1;
         document.getElementById('qtyNum').textContent = qty;
-        // 不同款式可能價格不同，切換款式時要同步更新畫面上顯示的價格
-        document.getElementById('dPrice').textContent = formatPrice(getStylePrice(product, selectedStyle));
+        // 不同款式可能價格（或特價）不同，切換款式時要同步更新畫面上顯示的價格
+        updateDisplayedPrice();
         // 不同款式可能現貨/預購狀態不同，切換款式時也要同步更新徽章
         document.getElementById('dStockBadge').textContent = getStyleStockType(product, selectedStyle) === 'preorder' ? '預購' : '現貨';
       });
@@ -339,6 +346,28 @@ function render() {
   }
 
   document.getElementById('addCartBtn').addEventListener('click', handleAddToCart);
+}
+
+// 切換款式時重畫價格區塊：特價中要顯示原價劃線＋特價，沒特價就跟以前一樣只顯示單一價格
+function updateDisplayedPrice() {
+  const info = getEffectivePrice(product, selectedStyle);
+  const priceEl = document.getElementById('dPrice');
+  const row = document.getElementById('dPriceRow');
+  priceEl.textContent = formatPrice(info.price);
+  priceEl.classList.toggle('dprice-sale', info.onSale);
+
+  let originalEl = document.getElementById('dPriceOriginal');
+  if (info.onSale) {
+    if (!originalEl) {
+      originalEl = document.createElement('span');
+      originalEl.className = 'dprice-original';
+      originalEl.id = 'dPriceOriginal';
+      row.insertBefore(originalEl, priceEl);
+    }
+    originalEl.textContent = formatPrice(info.original);
+  } else if (originalEl) {
+    originalEl.remove();
+  }
 }
 
 function switchImg(idx) {
@@ -511,7 +540,7 @@ function doAddToCart() {
   addToCart({
     productId: product.id,
     name: product.name,
-    price: getStylePrice(product, selectedStyle), // 不同款式可能有各自的價格，用選定款式的實際價格
+    price: getEffectivePrice(product, selectedStyle).price, // 有效價格：特價中就用特價，沒特價就是原價
     style: selectedStyle || '',
     qty: qty,
     image: (product.images && product.images[0]) || '',

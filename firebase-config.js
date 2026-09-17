@@ -257,10 +257,11 @@ function toCatalogProduct(p) {
     id: p.id,
     name: p.name || '',
     price: p.price ?? 0,
+    salePrice: p.salePrice ?? null,
     images: (p.images && p.images.length > 0) ? [p.images[0]] : [], // 列表只會顯示封面
     video: p.video || null,
     styles: (p.styles || []).map(s => ({
-      name: s.name, stock: s.stock ?? null, price: s.price ?? null, stockType: s.stockType || null
+      name: s.name, stock: s.stock ?? null, price: s.price ?? null, salePrice: s.salePrice ?? null, stockType: s.stockType || null
     })),
     stock: p.stock ?? null,
     stockType: p.stockType || 'instock',

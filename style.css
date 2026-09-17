@@ -233,6 +233,9 @@ img { max-width: 100%; display: block; }
 .pname { font-size: 11px; font-weight: 700; color: var(--c-coffee); line-height: 1.35; min-height: 2.7em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .psrc { font-size: 9px; background: var(--c-cream); color: var(--c-rose-text); padding: 2px 6px; border-radius: 6px; display: inline-block; margin-top: 4px; }
 .pprice { font-size: 13px; font-weight: 700; color: var(--c-orange); margin-top: 5px; }
+.pprice-row { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+.pprice-original { font-size: 11px; color: var(--c-rose-text); text-decoration: line-through; margin-top: 5px; }
+.pprice-sale { color: #d92626; }
 
 @media (min-width: 600px) {
   .product-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
