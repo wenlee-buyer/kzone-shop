@@ -258,6 +258,7 @@ function toCatalogProduct(p) {
     name: p.name || '',
     price: p.price ?? 0,
     salePrice: p.salePrice ?? null,
+    previewOnly: !!p.previewOnly,
     images: (p.images && p.images.length > 0) ? [p.images[0]] : [], // 列表只會顯示封面
     video: p.video || null,
     styles: (p.styles || []).map(s => ({

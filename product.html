@@ -262,10 +262,16 @@ function render() {
   // 混合款式的商品，徽章要看目前選定的款式各自現貨/預購狀態，切換款式時會再更新
   const stockBadgeText = getStyleStockType(product, selectedStyle) === 'preorder' ? '預購' : '現貨';
   const initialPriceInfo = getEffectivePrice(product, selectedStyle);
+  // 只先曝光、特價還沒定案的商品：可以進來看，但鎖住不能下單，價格也先不顯示確定金額
+  const isPreview = !!product.previewOnly;
 
   const buyAreaHtml = productSoldOut ? `
       <div class="stock-note" style="background:#f1efe8; border-color:var(--c-rose); text-align:center; font-size:13px; font-weight:700; color:var(--c-rose-text); padding:16px">
         此商品目前已售完
+      </div>
+  ` : isPreview ? `
+      <div class="stock-note" style="background:#fff8f5; border-color:var(--c-orange); text-align:center; font-size:13px; font-weight:700; color:var(--c-coffee); padding:16px">
+        特價尚未公布，暫不開放下單<br>請密切關注官方帳號公告
       </div>
   ` : `
       ${stylesHtml}
@@ -290,8 +296,10 @@ function render() {
         ${productTags.map(t => `<span class="dbadge">${escapeHtml(t.name)}</span>`).join('')}
       </div>
       <div class="dprice-row" id="dPriceRow">
-        ${initialPriceInfo.onSale ? `<span class="dprice-original" id="dPriceOriginal">${formatPrice(initialPriceInfo.original)}</span>` : ''}
-        <div class="dprice ${initialPriceInfo.onSale ? 'dprice-sale' : ''}" id="dPrice">${formatPrice(initialPriceInfo.price)}</div>
+        ${isPreview
+          ? `<span class="dprice-original" id="dPriceOriginal">${formatPrice(initialPriceInfo.original)}</span><div class="dprice" id="dPrice" style="color:var(--c-rose-text); font-size:16px">等待官方公告</div>`
+          : `${initialPriceInfo.onSale ? `<span class="dprice-original" id="dPriceOriginal">${formatPrice(initialPriceInfo.original)}</span>` : ''}<div class="dprice ${initialPriceInfo.onSale ? 'dprice-sale' : ''}" id="dPrice">${formatPrice(initialPriceInfo.price)}</div>`
+        }
       </div>
       ${product.recommendation ? `<div class="drec">✨ 小編推薦<br>${escapeHtml(product.recommendation)}</div>` : ''}
       ${buyAreaHtml}
@@ -302,7 +310,7 @@ function render() {
 
   setupImageSwipe();
 
-  if (productSoldOut) {
+  if (productSoldOut || isPreview) {
     document.getElementById('bottomBar').style.display = 'none';
     return;
   }
@@ -501,6 +509,12 @@ function openImageLightbox(mediaIdx) {
 }
 
 async function handleAddToCart() {
+  // 只曝光、暫不開放下單的商品，就算按鈕沒被畫面藏起來（例如按鈕還留在快取的舊畫面上），
+  // 這裡也要擋一次，不能讓客人用還沒定案的特價下單
+  if (product.previewOnly) {
+    showToast('這個商品特價尚未公布，暫不開放下單');
+    return;
+  }
   // 重新讀取最新庫存，避免使用者在頁面停留期間庫存已被其他人買完
   try {
     const freshDoc = await db.collection(COL.PRODUCTS).doc(product.id).get();
