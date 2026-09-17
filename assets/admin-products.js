@@ -182,6 +182,7 @@ function renderProductTile(p, idx) {
   const isSoldOut = isProductSoldOut(p);
   const priceInfo = getDisplayPriceInfo(p);
   const salePill = priceInfo.onSale ? `<span class="pill" style="background:#fde2e2;color:#d92626">特價中</span>` : '';
+  const previewPill = p.previewOnly ? `<span class="pill" style="background:#fff0e6;color:#c96a2e" title="客人可以點進來看，但暫不開放下單">只曝光未開賣</span>` : '';
 
   return `
     <div class="pg-grid-item" data-id="${p.id}" draggable="true" title="${escapeHtml(p.name)}">
@@ -197,7 +198,7 @@ function renderProductTile(p, idx) {
       </div>
       <div class="pg-grid-pills">
         ${catNames.map(n => `<span class="pill pill-instock">${escapeHtml(n)}</span>`).join('')}
-        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${salePill}${orphanPill}
+        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${salePill}${previewPill}${orphanPill}
       </div>
       <div class="pg-grid-actions" onmousedown="event.stopPropagation()">
         <button class="btn-icon" id="edit-${p.id}" title="編輯" style="font-size:11px; padding:5px 8px">編輯</button>
@@ -238,7 +239,8 @@ function duplicateProduct(p) {
     recommendation: '',
     featured: false,
     sortOrder: 9999,
-    archived: false
+    archived: false,
+    previewOnly: false
   };
   delete clone.id;
   delete clone.createdAt;
@@ -411,6 +413,13 @@ function openProductEditor(product, opts = {}) {
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-coffee); cursor:pointer">
             <input type="checkbox" id="pf_featured" ${product?.featured ? 'checked' : ''} style="width:16px; height:16px">
             精選顯示在首頁「所有商品」區塊
+          </label>
+        </div>
+
+        <div class="field" style="background:#fff8f5; border:0.5px solid var(--c-orange); border-radius:8px; padding:12px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-coffee); cursor:pointer">
+            <input type="checkbox" id="pf_previewOnly" ${product?.previewOnly ? 'checked' : ''} style="width:16px; height:16px">
+            只先曝光，暫不開放下單（特價還沒定案時用：客人可以點進來看，但價格顯示「等待官方公告」，按鈕鎖住不能加入購物車）
           </label>
         </div>
 
@@ -842,6 +851,7 @@ async function saveProduct(styles) {
   const deliveryMethod = document.querySelector('[data-delivery].selected')?.dataset.delivery || 'cvs';
   const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
   const featured = document.getElementById('pf_featured').checked;
+  const previewOnly = document.getElementById('pf_previewOnly').checked;
   // 排序值不再由這個表單填寫，改成在「商品管理」列表拖拉排序；
   // 編輯既有商品時保留原本的排序值；新增/複製的商品要排在「該分類最前面」（新品優先曝光），
   // 之後才由拖拉排序決定實際位置。實際計算（要抓現有商品的最小排序值）留到後面存檔時再做，
@@ -918,7 +928,7 @@ async function saveProduct(styles) {
 
     const productData = {
       name, categoryIds, price, salePrice, recommendation, stockType, deliveryMethod, tagIds,
-      featured, sortOrder: newSortOrder, sortOrderByCategory: newSortOrderByCategory,
+      featured, previewOnly, sortOrder: newSortOrder, sortOrderByCategory: newSortOrderByCategory,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,
       images: imageUrls,

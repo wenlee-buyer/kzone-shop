@@ -149,6 +149,9 @@ function renderProductCard(product, watermarkText) {
   const soldOut = isProductSoldOut(product);
   const soldOutOverlay = soldOut ? `<div class="sold-out-overlay">已售完</div>` : '';
   const priceInfo = getDisplayPriceInfo(product);
+  // 特價還沒定案、只先曝光讓客人看的商品：卡片仍然可以點進去看詳情（跟已售完不一樣，已售完是完全鎖住），
+  // 只是價格欄位不顯示確定金額，改顯示「等待官方公告」，避免客人截圖到還沒定案的價格
+  const isPreview = !!product.previewOnly;
 
   // 判斷是否為14天內新上架（顯示NEW緞帶）
   const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
@@ -156,6 +159,13 @@ function renderProductCard(product, watermarkText) {
   const isNew = createdAt !== null && createdAt >= fourteenDaysAgo;
   const newRibbon = isNew && !soldOut ? `<div class="new-ribbon"></div>` : '';
   const videoBadge = product.video ? `<span class="pbadge" style="left:5px; right:auto; top:auto; bottom:5px; background:rgba(0,0,0,0.6)">${icon('video', 12)} 影片</span>` : '';
+
+  const priceHtml = isPreview
+    ? `<span class="pprice-original">${formatPrice(priceInfo.original)}</span><div class="pprice" style="color:var(--c-rose-text); font-size:11px">等待官方公告</div>`
+    : `
+      ${(priceInfo.onSale && !soldOut) ? `<span class="pprice-original">${formatPrice(priceInfo.original)}</span>` : ''}
+      <div class="pprice ${(priceInfo.onSale && !soldOut) ? 'pprice-sale' : ''}" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}</div>
+    `;
 
   return `
     <div class="pcard ${soldOut ? 'pcard-soldout' : ''}" data-id="${product.id}" ${soldOut ? '' : `onclick="goToProduct('${product.id}')"`}>
@@ -170,8 +180,7 @@ function renderProductCard(product, watermarkText) {
         <div class="pname">${escapeHtml(product.name)}</div>
         <div class="psrc">${escapeHtml(product.categoryName || '')}</div>
         <div class="pprice-row">
-          ${(priceInfo.onSale && !soldOut) ? `<span class="pprice-original">${formatPrice(priceInfo.original)}</span>` : ''}
-          <div class="pprice ${(priceInfo.onSale && !soldOut) ? 'pprice-sale' : ''}" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}</div>
+          ${priceHtml}
         </div>
       </div>
     </div>
