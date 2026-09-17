@@ -169,7 +169,10 @@ function renderProductCard(product, watermarkText) {
       <div class="pinfo">
         <div class="pname">${escapeHtml(product.name)}</div>
         <div class="psrc">${escapeHtml(product.categoryName || '')}</div>
-        <div class="pprice" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}</div>
+        <div class="pprice-row">
+          ${(priceInfo.onSale && !soldOut) ? `<span class="pprice-original">${formatPrice(priceInfo.original)}</span>` : ''}
+          <div class="pprice ${(priceInfo.onSale && !soldOut) ? 'pprice-sale' : ''}" style="${soldOut ? 'color:var(--c-rose-text); text-decoration:line-through' : ''}">${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}</div>
+        </div>
       </div>
     </div>
   `;
@@ -386,21 +389,50 @@ function getStylePrice(product, styleName) {
   return product.price;
 }
 
+// 取得指定款式（或無款式商品本身）設定的特價：
+// 款式有自己的 salePrice 就用款式的，沒有就退回商品共用的 salePrice。
+// 跟 getStylePrice 是同一套「款式優先，沒設定才退回商品層」的規則
+function getStyleSalePrice(product, styleName) {
+  const styles = normalizeStyles(product.styles);
+  if (styles.length > 0 && styleName) {
+    const style = styles.find(s => s.name === styleName);
+    if (style && style.salePrice !== null && style.salePrice !== undefined) return style.salePrice;
+  }
+  return (product.salePrice !== null && product.salePrice !== undefined) ? product.salePrice : null;
+}
+
+// 算出「客人實際要付的價格」，並判斷是不是真的在特價中。
+// 特價一定要小於原價才算數：如果店家把特價填得比原價高或一樣，就當作沒設定，
+// 沿用原價正常顯示，避免打錯數字反而讓商品看起來變貴、還掛著「特價」字樣
+function getEffectivePrice(product, styleName) {
+  const original = getStylePrice(product, styleName);
+  const sale = getStyleSalePrice(product, styleName);
+  const onSale = sale !== null && sale !== undefined && !isNaN(sale) && sale > 0 && sale < original;
+  return { original, price: onSale ? sale : original, onSale };
+}
+
 // 取得商品在商品卡/列表上要顯示的價格資訊：
-// 如果各款式價格都一樣（或沒有款式），回傳單一價格；
-// 如果款式價格不同，回傳最低價，並標記 isRange，前台顯示可以加上「起」字樣
+// 如果各款式「實際要付的價格」都一樣（或沒有款式），回傳單一價格；
+// 如果款式間不同，回傳最低價，並標記 isRange，前台顯示可以加上「起」字樣。
+// 同時回傳這個最低價對應的原價／是否特價中，卡片才能畫出原價劃線的樣式
 function getDisplayPriceInfo(product) {
   const styles = normalizeStyles(product.styles);
-  const stylePrices = styles
-    .map(s => (s.price !== null && s.price !== undefined) ? s.price : product.price)
-    .filter(p => p !== null && p !== undefined);
 
-  if (stylePrices.length === 0) {
-    return { price: product.price, isRange: false };
+  if (styles.length === 0) {
+    const eff = getEffectivePrice(product, null);
+    return { price: eff.price, original: eff.original, onSale: eff.onSale, isRange: false };
   }
-  const min = Math.min(...stylePrices);
-  const max = Math.max(...stylePrices);
-  return { price: min, isRange: min !== max };
+
+  const effs = styles.map(s => getEffectivePrice(product, s.name));
+  const prices = effs.map(e => e.price).filter(p => p !== null && p !== undefined);
+  if (prices.length === 0) {
+    return { price: product.price, original: product.price, onSale: false, isRange: false };
+  }
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  // 挑第一個效果價等於最低價的款式，拿它的原價/特價狀態來配對顯示
+  const minEff = effs.find(e => e.price === min);
+  return { price: min, original: minEff.original, onSale: minEff.onSale, isRange: min !== max };
 }
 
 // ---- 庫存/售完判斷共用邏輯 ----

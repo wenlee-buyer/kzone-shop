@@ -180,6 +180,8 @@ function renderProductTile(p, idx) {
   const orphanPill = hasOrphanedCategory(p, appState.categories) ? `<span class="pill" style="background:#fff3cd;color:#856404" title="這個商品掛的分類已經被刪除了，前台分類列找不到它">⚠ 分類已刪除</span>` : '';
   const img = (p.images && p.images[0]) || '';
   const isSoldOut = isProductSoldOut(p);
+  const priceInfo = getDisplayPriceInfo(p);
+  const salePill = priceInfo.onSale ? `<span class="pill" style="background:#fde2e2;color:#d92626">特價中</span>` : '';
 
   return `
     <div class="pg-grid-item" data-id="${p.id}" draggable="true" title="${escapeHtml(p.name)}">
@@ -189,10 +191,13 @@ function renderProductTile(p, idx) {
         ${isSoldOut ? `<div class="pg-grid-soldout">已售完</div>` : ''}
       </div>
       <div class="pg-grid-name">${escapeHtml(p.name)}</div>
-      <div class="pg-grid-price">${formatPrice(p.price)}</div>
+      <div class="pg-grid-price">
+        ${priceInfo.onSale ? `<span style="text-decoration:line-through; color:var(--c-rose-text); font-size:11px; margin-right:4px">${formatPrice(priceInfo.original)}</span>` : ''}
+        ${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}
+      </div>
       <div class="pg-grid-pills">
         ${catNames.map(n => `<span class="pill pill-instock">${escapeHtml(n)}</span>`).join('')}
-        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${orphanPill}
+        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${salePill}${orphanPill}
       </div>
       <div class="pg-grid-actions" onmousedown="event.stopPropagation()">
         <button class="btn-icon" id="edit-${p.id}" title="編輯" style="font-size:11px; padding:5px 8px">編輯</button>
@@ -467,6 +472,11 @@ function openProductEditor(product, opts = {}) {
           <input type="number" id="pf_price" value="${product?.price || ''}" placeholder="0">
         </div>
 
+        <div class="field">
+          <label class="field-label">特價（NT$，選填。有填才會在前台顯示原價劃線＋特價，留空就是正常售價）</label>
+          <input type="number" id="pf_salePrice" value="${product?.salePrice ?? ''}" placeholder="留空表示沒有特價">
+        </div>
+
         <div class="field" id="pf_simpleStockField">
           <label class="field-label">數量／庫存（選填，留空表示不限制。賣完會自動顯示「已售完」）</label>
           <input type="number" id="pf_stock" value="${product?.stock ?? ''}" placeholder="例：10">
@@ -492,8 +502,8 @@ function openProductEditor(product, opts = {}) {
   // 款式列表渲染（每個款式可各自設定庫存跟價格；相容舊資料：舊版 styles 是純字串陣列，或沒有 price 欄位）
   const stylesListEl = document.getElementById('pf_stylesList');
   let styles = (product?.styles || []).map(s => {
-    if (typeof s === 'string') return { name: s, stock: '', price: '', stockType: '' };
-    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '', stockType: s.stockType || '' };
+    if (typeof s === 'string') return { name: s, stock: '', price: '', salePrice: '', stockType: '' };
+    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '', salePrice: s.salePrice ?? '', stockType: s.stockType || '' };
   });
 
   function toggleSimpleStockVisibility() {
@@ -506,6 +516,7 @@ function openProductEditor(product, opts = {}) {
         <input type="text" value="${escapeHtml(s.name)}" placeholder="款式名稱" data-style-name-idx="${i}" style="flex:2">
         <input type="number" value="${escapeHtml(String(s.stock))}" placeholder="庫存(留空不限)" data-style-stock-idx="${i}" style="flex:1; min-width:0">
         <input type="number" value="${escapeHtml(String(s.price))}" placeholder="價格(留空同上)" data-style-price-idx="${i}" style="flex:1; min-width:0">
+        <input type="number" value="${escapeHtml(String(s.salePrice))}" placeholder="特價(選填)" data-style-saleprice-idx="${i}" style="flex:1; min-width:0">
         <button class="btn-icon danger" data-remove-style="${i}">移除</button>
         <div class="tag-chip-list" style="flex-basis:100%; margin-top:2px">
           <div class="tag-chip ${!s.stockType ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="">跟隨商品</div>
@@ -529,6 +540,11 @@ function openProductEditor(product, opts = {}) {
         styles[parseInt(e.target.dataset.stylePriceIdx)].price = e.target.value;
       });
     });
+    stylesListEl.querySelectorAll('[data-style-saleprice-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.styleSalepriceIdx)].salePrice = e.target.value;
+      });
+    });
     stylesListEl.querySelectorAll('[data-remove-style]').forEach(btn => {
       btn.addEventListener('click', () => {
         styles.splice(parseInt(btn.dataset.removeStyle), 1);
@@ -548,7 +564,7 @@ function openProductEditor(product, opts = {}) {
   toggleSimpleStockVisibility();
 
   document.getElementById('pf_addStyleBtn').addEventListener('click', () => {
-    styles.push({ name: '', stock: '', price: '', stockType: '' });
+    styles.push({ name: '', stock: '', price: '', salePrice: '', stockType: '' });
     renderStylesList();
     toggleSimpleStockVisibility();
   });
@@ -817,6 +833,8 @@ async function saveProduct(styles) {
   const name = document.getElementById('pf_name').value.trim();
   const categoryIds = Array.from(document.getElementById('pf_categoryChips').querySelectorAll('.selected')).map(el => el.dataset.cat);
   const price = parseFloat(document.getElementById('pf_price').value);
+  const salePriceVal = document.getElementById('pf_salePrice').value;
+  const salePrice = salePriceVal === '' ? null : parseFloat(salePriceVal);
   const stockVal = document.getElementById('pf_stock').value;
   const stock = stockVal === '' ? null : parseInt(stockVal);
   const recommendation = document.getElementById('pf_recommendation').value.trim();
@@ -838,6 +856,8 @@ async function saveProduct(styles) {
       stock: s.stock === '' || s.stock === null || s.stock === undefined ? null : parseInt(s.stock),
       // price 留空就是 null，代表這個款式跟商品共用同一個價格
       price: s.price === '' || s.price === null || s.price === undefined ? null : parseFloat(s.price),
+      // salePrice 留空就是 null，代表這個款式沒有自己的特價，看是否要跟商品共用的特價
+      salePrice: s.salePrice === '' || s.salePrice === null || s.salePrice === undefined ? null : parseFloat(s.salePrice),
       // stockType 留空就是跟隨商品共用的現貨/預購設定
       stockType: s.stockType || null
     }));
@@ -845,7 +865,9 @@ async function saveProduct(styles) {
   if (!name) { showToast('請輸入商品名稱'); return; }
   if (categoryIds.length === 0) { showToast('請至少選擇一個來源分類'); return; }
   if (isNaN(price) || price < 0) { showToast('請輸入正確的價格'); return; }
+  if (salePrice !== null && (isNaN(salePrice) || salePrice < 0)) { showToast('特價格式不正確，請確認'); return; }
   if (cleanStyles.some(s => s.price !== null && (isNaN(s.price) || s.price < 0))) { showToast('款式的價格格式不正確，請確認'); return; }
+  if (cleanStyles.some(s => s.salePrice !== null && (isNaN(s.salePrice) || s.salePrice < 0))) { showToast('款式的特價格式不正確，請確認'); return; }
   if (productsPageState.pendingImages.length === 0) { showToast('請至少上傳一張商品圖片'); return; }
 
   const saveBtn = document.getElementById('pf_saveBtn');
@@ -895,7 +917,7 @@ async function saveProduct(styles) {
     }
 
     const productData = {
-      name, categoryIds, price, recommendation, stockType, deliveryMethod, tagIds,
+      name, categoryIds, price, salePrice, recommendation, stockType, deliveryMethod, tagIds,
       featured, sortOrder: newSortOrder, sortOrderByCategory: newSortOrderByCategory,
       stock: cleanStyles.length > 0 ? null : stock,
       styles: cleanStyles,

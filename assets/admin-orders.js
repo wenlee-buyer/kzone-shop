@@ -1076,7 +1076,7 @@ function addItemToEditOrder(product, style) {
       name: product.name,
       style: style || '',
       qty: 1,
-      price: getStylePrice(product, style),
+      price: getEffectivePrice(product, style).price, // 商品目前有特價的話，手動加入訂單也預設用特價
       image: (product.images && product.images[0]) || '',
       stockType: getStyleStockType(product, style),
       deliveryMethod: product.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs'
