@@ -427,7 +427,9 @@ function renderFailedOrderCard(f) {
 // 額度一爆連客人結帳都會失敗（會收到 Quota exceeded）。
 let ordersCache = { data: null, at: 0 };
 const ORDERS_CACHE_TTL = 3 * 60 * 1000; // 3 分鐘內重複使用，超過就重新讀
-const ORDERS_CACHE_KEY = 'kzone_admin_orders_cache';
+// 結尾的版本號：改過讀取邏輯時就把它加一，讓瀏覽器裡舊版留下來的快取直接作廢。
+// （之前那版有問題的邏輯可能在你的瀏覽器裡留下一份「空的訂單清單」快取，不換 key 的話會繼續看到空畫面）
+const ORDERS_CACHE_KEY = 'kzone_admin_orders_cache_v2';
 
 // Firestore 的時間欄位存進 sessionStorage 會被 JSON 轉成純物件，.toDate() 會不見。
 // 訂單卡片的日期、併單要挑「最早那一筆」都靠它，所以讀回來時要還原成真正的 Timestamp，
@@ -505,35 +507,23 @@ async function getOrdersForAdmin(forceRefresh) {
 }
 
 // ---- 舊訂單沒有 shipped 這個欄位，要一次補齊，之後才能只查未出貨的 ----
-// 判斷方式：讀最新的一筆訂單看看有沒有 shipped 欄位。只花 1 次讀取，
-// 而且確認補齊之後就把結果記在瀏覽器，不用每次開後台都再確認一次
-const MIGRATION_FLAG_KEY = 'kzone_orders_shipped_migrated';
+// 判斷方式：只認「資料升級真的跑完之後寫在網站設定裡的那個記號」，不做任何聰明的猜測。
+//
+// ⚠ 這裡踩過一次很痛的坑，千萬不要改回去猜：
+// 原本是「讀最新一筆訂單，看它有沒有 shipped 欄位」來判斷。結果只要在升級前有客人下了新訂單
+// （新訂單本來就自帶 shipped 欄位），系統就會誤判成「已經升級過了」，接著改用只查 shipped=false 的方式，
+// 那些還沒補欄位的舊訂單就通通查不到 —— 後台看起來像是所有訂單都不見了（資料其實好好的，只是查不到）。
+// 所以判斷一定要用「確定跑完才會寫入」的記號，而不是從資料長相去推測。
 let shippedMigrationNeeded = null;
 
 async function needsShippedFieldMigration() {
   if (shippedMigrationNeeded !== null) return shippedMigrationNeeded;
   try {
-    if (localStorage.getItem(MIGRATION_FLAG_KEY) === '1') {
-      shippedMigrationNeeded = false;
-      return false;
-    }
-  } catch (e) {}
-
-  try {
-    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(1).get();
-    if (snap.empty) {
-      // 一筆訂單都沒有，之後建立的新訂單都會自帶 shipped 欄位，不用補資料
-      shippedMigrationNeeded = false;
-    } else {
-      shippedMigrationNeeded = snap.docs[0].data().shipped === undefined;
-    }
+    const doc = await db.collection(COL.SETTINGS).doc('main').get();
+    shippedMigrationNeeded = !(doc.exists && doc.data().ordersShippedMigrated === true);
   } catch (err) {
     console.error('確認訂單資料格式失敗:', err);
     shippedMigrationNeeded = true; // 判斷不出來時走保守路線（用舊方式讀），寧可多讀也不要漏訂單
-  }
-
-  if (!shippedMigrationNeeded) {
-    try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
   }
   return shippedMigrationNeeded;
 }
@@ -543,11 +533,6 @@ async function needsShippedFieldMigration() {
 async function migrateOrdersShippedField() {
   const snap = await db.collection(COL.ORDERS).get();
   const targets = snap.docs.filter(d => d.data().shipped === undefined);
-  if (targets.length === 0) {
-    shippedMigrationNeeded = false;
-    try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
-    return 0;
-  }
 
   for (let i = 0; i < targets.length; i += 500) {
     const batch = db.batch();
@@ -557,8 +542,13 @@ async function migrateOrdersShippedField() {
     await batch.commit();
   }
 
+  // 一定要等所有訂單都補完了，才寫下「已完成升級」這個記號。
+  // 順序不能顛倒：記號一旦寫下去，系統就會改用只查未出貨的方式，
+  // 這時候若還有訂單沒補到欄位，那些訂單就會從後台清單消失
+  await db.collection(COL.SETTINGS).doc('main').set({ ordersShippedMigrated: true }, { merge: true });
+  clearStorefrontCache(); // 網站設定被改過了，順手清掉前台的設定快取
+
   shippedMigrationNeeded = false;
-  try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
   return targets.length;
 }
 
