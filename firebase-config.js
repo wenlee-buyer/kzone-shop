@@ -184,8 +184,18 @@ function clearCart() {
 const CACHE_TTL = {
   PRODUCTS: 3 * 60 * 1000,   // 商品 3 分鐘：庫存會變，抓短一點
   TAXONOMY: 30 * 60 * 1000,  // 分類/標籤 30 分鐘：幾乎不會變
-  SETTINGS: 30 * 60 * 1000   // 網站設定 30 分鐘
+  SETTINGS: 30 * 60 * 1000,  // 網站設定 30 分鐘
+  PRODUCT_DETAIL: 2 * 60 * 1000  // 單一商品詳情頁 2 分鐘：同一頁在這段時間內被重複打開（返回上一頁又點進來、
+                                 // 爬蟲重複抓同一頁等等）不用重新讀一次，真正下單前 handleAddToCart 還是會強制重讀最新庫存
 };
+
+// 讀單一商品詳情用，跟目錄快照(fetchCatalog)分開存，key 是每個商品各自一組
+async function fetchProductDetailCached(id) {
+  return cachedFetch(`product_${id}`, CACHE_TTL.PRODUCT_DETAIL, async () => {
+    const doc = await db.collection(COL.PRODUCTS).doc(id).get();
+    return doc.exists ? { id: doc.id, ...doc.data() } : null;
+  });
+}
 
 // 同一個 key 正在讀取中的請求，用來避免「同時呼叫三次就真的打三次資料庫」。
 // 例如頁面初始化時同時要商品、分類、標籤，這三個都來自同一份目錄快照，

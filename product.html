@@ -146,24 +146,28 @@ async function init() {
   }
 
   // 分類/標籤走快取（客人逐一點開商品時，這兩組資料每次都一樣，沒必要重讀）。
-  // 商品本身仍然即時讀取單一筆，這樣客人看到的價格與庫存才是最新的
-  const [settingsData, catList, tagList, prodDoc] = await Promise.all([
+  // 商品本身這裡改成短時間(2分鐘)快取：同一頁在這段時間內被重複打開不用再讀一次
+  // （返回上一頁又點回來、爬蟲/機器人重複抓同一頁都很常見，之前每次都即時讀一筆，
+  // 流量一多很容易把 Firestore 免費額度榨乾，導致結帳跟著失敗）。
+  // 真正攸關能不能下單的庫存把關，在按下「加入購物車」時（handleAddToCart）還是會強制重讀最新資料，
+  // 所以這裡放寬成短快取不會有超賣風險
+  const [settingsData, catList, tagList, prodData] = await Promise.all([
     getSettings(),
     fetchCategoriesCached(),
     fetchTagsCached(),
-    db.collection(COL.PRODUCTS).doc(id).get()
+    fetchProductDetailCached(id)
   ]);
 
   settings = settingsData;
   categories = [...catList].sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
   tags = tagList;
 
-  if (!prodDoc.exists) {
+  if (!prodData) {
     document.getElementById('content').innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}找不到此商品，可能已被下架</div>`;
     return;
   }
 
-  product = { id: prodDoc.id, ...prodDoc.data() };
+  product = prodData;
   renderCategoryNav();
   render();
 

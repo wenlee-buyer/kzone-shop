@@ -441,6 +441,9 @@ async function submitCvsOrder(cart, lineName, subtotal, shipping, overlay, hasPr
       shippingFee: shipping,
       total: total,
       orderDate: orderDateStr,
+      // 後台平常只載入「還沒出貨」的訂單（shipped=false），藉此省下大量 Firestore 讀取額度。
+      // 新訂單一定要帶這個欄位，少了它這張單不會出現在後台訂單列表裡
+      shipped: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     }).catch(async (writeErr) => {
       // 走到這裡代表庫存已經扣掉了，訂單卻沒寫進去——這是最需要人工介入的狀況，
