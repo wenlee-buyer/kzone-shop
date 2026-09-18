@@ -355,8 +355,11 @@ function sortBySortOrderSoldOutLast(products, categoryId) {
 function normalizeStyles(styles) {
   if (!styles || !Array.isArray(styles)) return [];
   return styles.map(s => {
-    if (typeof s === 'string') return { name: s, stock: null, price: null, stockType: null };
-    return { name: s.name || '', stock: s.stock ?? null, price: s.price ?? null, stockType: s.stockType || null };
+    // ⚠ 這裡列到的欄位才會被保留下來，漏掉的欄位會在正規化時被丟掉。
+    // （salePrice 就曾經因為沒列在這裡，導致「每個款式各自設特價」設了卻完全沒作用，
+    //   永遠退回用商品層的特價。日後款式再新增欄位時，記得一起加進來。）
+    if (typeof s === 'string') return { name: s, stock: null, price: null, salePrice: null, stockType: null };
+    return { name: s.name || '', stock: s.stock ?? null, price: s.price ?? null, salePrice: s.salePrice ?? null, stockType: s.stockType || null };
   }).filter(s => s.name);
 }
 

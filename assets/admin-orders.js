@@ -11,9 +11,12 @@ async function renderOrdersPage() {
         <div class="admin-subtitle">客人送出的訂單紀錄（需自行至 LINE 官方帳號核對截圖確認）</div>
       </div>
       <div class="admin-btn-row">
+        <button class="btn-icon" id="refreshOrdersBtn" style="width:auto" title="重新讀取最新訂單（平常會沿用快取，省 Firestore 讀取額度）">重新整理</button>
         <button class="btn-primary" id="addManualOrderBtn" style="width:auto">+ 手動新增訂單</button>
       </div>
     </div>
+
+    <div id="ordersMigrationNotice"></div>
 
     <div class="admin-card">
       <h3 style="font-size:14px; color:var(--c-coffee); margin-bottom:10px">匯出訂單匯入格式（賣貨便）</h3>
@@ -87,20 +90,78 @@ async function renderOrdersPage() {
   document.getElementById('exportEndDate').value = today;
   document.getElementById('exportOrdersBtn').addEventListener('click', exportOrdersToExcel);
   document.getElementById('addManualOrderBtn').addEventListener('click', createManualOrder);
+  // 平常沿用快取（自己做的異動都會即時同步到快取），要看有沒有新進來的客人訂單時按這顆
+  document.getElementById('refreshOrdersBtn').addEventListener('click', async () => {
+    invalidateOrdersCache();
+    invalidateFailedOrdersCache();
+    resetShippedHistory(); // 已出貨那區也回到「尚未載入」，要看再點開，不會偷偷多讀
+    await loadAndRenderOrders(true);
+    await loadAndRenderFailedOrders(true);
+    showToast('已重新讀取最新訂單');
+  });
 
   await loadAndRenderOrders();
   await loadAndRenderFailedOrders();
 }
 
+// 失敗紀錄的快取，跟訂單快取同一套作法：這份清單每次重畫都要讀 100 筆，
+// 但它其實很少變動（只有客人結帳失敗時才會多一筆），沒必要每次重畫都重讀
+let failedOrdersCache = { data: null, at: 0 };
+const FAILED_ORDERS_CACHE_KEY = 'kzone_admin_failed_orders_cache';
+
+function persistFailedOrdersCache() {
+  try {
+    sessionStorage.setItem(FAILED_ORDERS_CACHE_KEY, JSON.stringify(failedOrdersCache));
+  } catch (e) {}
+}
+
+function invalidateFailedOrdersCache() {
+  failedOrdersCache = { data: null, at: 0 };
+  try { sessionStorage.removeItem(FAILED_ORDERS_CACHE_KEY); } catch (e) {}
+}
+
+function patchFailedOrderInCache(id, changes) {
+  if (!failedOrdersCache.data) return;
+  const target = failedOrdersCache.data.find(f => f.id === id);
+  if (target) Object.assign(target, changes);
+  persistFailedOrdersCache();
+}
+
+function removeFailedOrderFromCache(id) {
+  if (!failedOrdersCache.data) return;
+  failedOrdersCache.data = failedOrdersCache.data.filter(f => f.id !== id);
+  persistFailedOrdersCache();
+}
+
+async function getFailedOrdersForAdmin(forceRefresh) {
+  if (!forceRefresh) {
+    if (!failedOrdersCache.data) {
+      try {
+        const raw = sessionStorage.getItem(FAILED_ORDERS_CACHE_KEY);
+        const cached = raw ? JSON.parse(raw) : null;
+        if (cached && Array.isArray(cached.data) && Date.now() - cached.at < ORDERS_CACHE_TTL) {
+          failedOrdersCache = { data: cached.data.map(reviveOrderTimestamps), at: cached.at };
+        }
+      } catch (e) {}
+    }
+    if (failedOrdersCache.data && (Date.now() - failedOrdersCache.at < ORDERS_CACHE_TTL)) {
+      return failedOrdersCache.data;
+    }
+  }
+  // 這裡不加 where('resolved','==',false)，因為要連已處理的也一起顯示（已處理的收起來放後面），
+  // 而且單一 orderBy 不需要額外建立複合索引
+  const snap = await db.collection(COL.FAILED_ORDERS).orderBy('createdAt', 'desc').limit(100).get();
+  failedOrdersCache = { data: snap.docs.map(d => ({ id: d.id, ...d.data() })), at: Date.now() };
+  persistFailedOrdersCache();
+  return failedOrdersCache.data;
+}
+
 // 結帳失敗紀錄：客人按了送出卻沒能成立訂單的情況，一定要讓店家看得到
-async function loadAndRenderFailedOrders() {
+async function loadAndRenderFailedOrders(forceRefresh) {
   const wrap = document.getElementById('failedOrdersList');
   if (!wrap) return;
   try {
-    // 這裡不加 where('resolved','==',false)，因為要連已處理的也一起顯示（已處理的收起來放後面），
-    // 而且單一 orderBy 不需要額外建立複合索引
-    const snap = await db.collection(COL.FAILED_ORDERS).orderBy('createdAt', 'desc').limit(100).get();
-    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = await getFailedOrdersForAdmin(forceRefresh);
     const pending = all.filter(f => !f.resolved);
     const resolved = all.filter(f => !!f.resolved);
 
@@ -122,8 +183,11 @@ async function loadAndRenderFailedOrders() {
 
     all.forEach(f => {
       document.getElementById(`resolve-failed-${f.id}`)?.addEventListener('click', async () => {
-        await db.collection(COL.FAILED_ORDERS).doc(f.id).update({ resolved: !f.resolved });
+        const newResolved = !f.resolved;
+        await db.collection(COL.FAILED_ORDERS).doc(f.id).update({ resolved: newResolved });
         showToast(f.resolved ? '已改回未處理' : '已標記為已處理');
+        f.resolved = newResolved;
+        patchFailedOrderInCache(f.id, { resolved: newResolved });
         loadAndRenderFailedOrders();
       });
       document.getElementById(`restore-failed-${f.id}`)?.addEventListener('click', () => restoreFailedOrder(f));
@@ -131,6 +195,7 @@ async function loadAndRenderFailedOrders() {
         if (!confirm('確定要刪除這筆失敗紀錄嗎？')) return;
         await db.collection(COL.FAILED_ORDERS).doc(f.id).delete();
         showToast('已刪除');
+        removeFailedOrderFromCache(f.id);
         loadAndRenderFailedOrders();
       });
     });
@@ -179,6 +244,8 @@ async function createManualOrder() {
       shippingFee: 0,
       total: 0,
       orderDate: orderDateStr,
+      // 後台平常只查 shipped=false 的訂單，所以每張新訂單都一定要帶這個欄位，否則會查不到
+      shipped: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       // 標記是手動建立的，日後對帳時分得出來哪些不是客人自己下的
       manuallyCreated: true
@@ -188,7 +255,8 @@ async function createManualOrder() {
     const doc = await db.collection(COL.ORDERS).doc(docRef.id).get();
     const order = { id: doc.id, ...doc.data() };
 
-    invalidateOrdersCache();
+    // 剛剛已經把這筆新訂單讀回來了，直接塞進快取就好，不用為了它整份重讀
+    addOrderToCache(order);
     await loadAndRenderOrders();
     showToast('已建立空白訂單，請填入商品與收件資料');
     openEditOrderModal(order);
@@ -277,6 +345,8 @@ async function restoreFailedOrder(f) {
       shippingFee: f.shippingFee ?? 0,
       total: f.total ?? 0,
       orderDate: orderDateStr,
+      // 後台平常只查 shipped=false 的訂單，補成的訂單當然是還沒出貨
+      shipped: false,
       // 保留原本下單時間，訂單才會排在正確的時序位置，不會跑到最上面看起來像新單
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       restoredFromFailure: true,
@@ -300,7 +370,10 @@ async function restoreFailedOrder(f) {
     // 對帳時會分不清哪個才是真的。刪除排在訂單建立成功之後，所以不會有資料遺失的風險
     await db.collection(COL.FAILED_ORDERS).doc(f.id).delete();
 
+    // 新訂單是剛建立的（手上沒有寫好 createdAt 的完整資料），這裡只好讓訂單清單重讀一次；
+    // 失敗紀錄那邊我們很清楚就是刪掉這一筆，直接從快取移除即可
     invalidateOrdersCache();
+    removeFailedOrderFromCache(f.id);
     showToast(`已補成訂單 ${f.orderNo || ''}${stockWarning}`);
     loadAndRenderOrders();
     loadAndRenderFailedOrders();
@@ -353,20 +426,172 @@ function renderFailedOrderCard(f) {
 // 光是點開幾個功能就是上百次讀取，很容易把免費方案每天 5 萬次的額度燒完，
 // 額度一爆連客人結帳都會失敗（會收到 Quota exceeded）。
 let ordersCache = { data: null, at: 0 };
-const ORDERS_CACHE_TTL = 60 * 1000; // 1 分鐘內重複使用，超過就重新讀
+const ORDERS_CACHE_TTL = 3 * 60 * 1000; // 3 分鐘內重複使用，超過就重新讀
+const ORDERS_CACHE_KEY = 'kzone_admin_orders_cache';
+
+// Firestore 的時間欄位存進 sessionStorage 會被 JSON 轉成純物件，.toDate() 會不見。
+// 訂單卡片的日期、併單要挑「最早那一筆」都靠它，所以讀回來時要還原成真正的 Timestamp，
+// 不還原的話日期會顯示錯誤、併單也會挑錯要保留的訂單
+const ORDER_TIME_FIELDS = ['createdAt', 'shippedAt', 'lastEditedAt', 'mergedAt'];
+function reviveOrderTimestamps(order) {
+  for (const key of ORDER_TIME_FIELDS) {
+    const v = order[key];
+    if (v && typeof v === 'object' && typeof v.seconds === 'number' && typeof v.toDate !== 'function') {
+      order[key] = new firebase.firestore.Timestamp(v.seconds, v.nanoseconds || 0);
+    }
+  }
+  return order;
+}
+
+// 把快取存進 sessionStorage：後台重新整理(F5)、或在分頁之間來回切換時，
+// 只要還在 TTL 內就不用再把整份訂單重讀一次（一次就是上百筆讀取）
+function persistOrdersCache() {
+  try {
+    sessionStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify(ordersCache));
+  } catch (e) {
+    // 存不進去（容量滿或隱私模式）就算了，只是少一層省讀取的效果，不影響功能
+  }
+}
+
+function restoreOrdersCache() {
+  if (ordersCache.data) return;
+  try {
+    const raw = sessionStorage.getItem(ORDERS_CACHE_KEY);
+    if (!raw) return;
+    const cached = JSON.parse(raw);
+    if (!cached || !Array.isArray(cached.data)) return;
+    if (Date.now() - cached.at >= ORDERS_CACHE_TTL) return;
+    ordersCache = { data: cached.data.map(reviveOrderTimestamps), at: cached.at };
+  } catch (e) {
+    // 壞掉就當作沒有快取，重新讀一次就好
+  }
+}
+
+// ---- 只載入「未出貨」訂單 ----
+// 已出貨的訂單是歷史資料，幾乎不會再變動，卻會一直累積下去。
+// 如果每次開後台都連已出貨的一起讀回來，訂單越多就讀越兇，最後就是 Firestore 免費額度被榨乾、
+// 客人結帳收到「Quota exceeded」。所以平常只讀未出貨的，已出貨的要看時才另外分批載入。
+//
+// 查詢只用單一欄位的等於條件（不加 orderBy），這樣 Firestore 用內建索引就能跑，
+// 不需要另外去主控台建立複合索引；排序改在前端做，反正未出貨的筆數本來就不多。
+const orderSortNewestFirst = (a, b) => {
+  const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+  const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+  return tb - ta;
+};
 
 async function getOrdersForAdmin(forceRefresh) {
-  if (!forceRefresh && ordersCache.data && (Date.now() - ordersCache.at < ORDERS_CACHE_TTL)) {
-    return ordersCache.data;
+  if (!forceRefresh) {
+    restoreOrdersCache();
+    if (ordersCache.data && (Date.now() - ordersCache.at < ORDERS_CACHE_TTL)) {
+      return ordersCache.data;
+    }
   }
-  const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
-  ordersCache = { data: snap.docs.map(d => ({ id: d.id, ...d.data() })), at: Date.now() };
+
+  let orders;
+  if (await needsShippedFieldMigration()) {
+    // 舊資料還沒補上 shipped 欄位時，用舊的方式整份撈回來，
+    // 確保畫面不會一片空白（補完資料之後就不會再走這條路）
+    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(200).get();
+    orders = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o => !o.shippedAt);
+  } else {
+    const snap = await db.collection(COL.ORDERS).where('shipped', '==', false).get();
+    orders = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(orderSortNewestFirst);
+  }
+
+  ordersCache = { data: orders, at: Date.now() };
+  persistOrdersCache();
   return ordersCache.data;
 }
 
-// 改到訂單資料時呼叫，讓下一次讀取一定拿到最新的
+// ---- 舊訂單沒有 shipped 這個欄位，要一次補齊，之後才能只查未出貨的 ----
+// 判斷方式：讀最新的一筆訂單看看有沒有 shipped 欄位。只花 1 次讀取，
+// 而且確認補齊之後就把結果記在瀏覽器，不用每次開後台都再確認一次
+const MIGRATION_FLAG_KEY = 'kzone_orders_shipped_migrated';
+let shippedMigrationNeeded = null;
+
+async function needsShippedFieldMigration() {
+  if (shippedMigrationNeeded !== null) return shippedMigrationNeeded;
+  try {
+    if (localStorage.getItem(MIGRATION_FLAG_KEY) === '1') {
+      shippedMigrationNeeded = false;
+      return false;
+    }
+  } catch (e) {}
+
+  try {
+    const snap = await db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(1).get();
+    if (snap.empty) {
+      // 一筆訂單都沒有，之後建立的新訂單都會自帶 shipped 欄位，不用補資料
+      shippedMigrationNeeded = false;
+    } else {
+      shippedMigrationNeeded = snap.docs[0].data().shipped === undefined;
+    }
+  } catch (err) {
+    console.error('確認訂單資料格式失敗:', err);
+    shippedMigrationNeeded = true; // 判斷不出來時走保守路線（用舊方式讀），寧可多讀也不要漏訂單
+  }
+
+  if (!shippedMigrationNeeded) {
+    try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
+  }
+  return shippedMigrationNeeded;
+}
+
+// 一次把所有舊訂單補上 shipped 欄位（shipped = 有沒有出貨日期）。
+// 用批次寫入，500 筆一批（Firestore 單批上限）
+async function migrateOrdersShippedField() {
+  const snap = await db.collection(COL.ORDERS).get();
+  const targets = snap.docs.filter(d => d.data().shipped === undefined);
+  if (targets.length === 0) {
+    shippedMigrationNeeded = false;
+    try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
+    return 0;
+  }
+
+  for (let i = 0; i < targets.length; i += 500) {
+    const batch = db.batch();
+    targets.slice(i, i + 500).forEach(d => {
+      batch.update(d.ref, { shipped: !!d.data().shippedAt });
+    });
+    await batch.commit();
+  }
+
+  shippedMigrationNeeded = false;
+  try { localStorage.setItem(MIGRATION_FLAG_KEY, '1'); } catch (e) {}
+  return targets.length;
+}
+
+// 改到訂單資料時呼叫，讓下一次讀取一定拿到最新的。
+// ⚠ 這個會讓下次讀取重新抓回全部訂單（上百筆讀取），所以只在「不知道改了什麼」時才用，
+// 例如手動按重新整理。單筆訂單的異動請改用下面的 patch / remove / add，不要整份丟掉重讀
 function invalidateOrdersCache() {
   ordersCache = { data: null, at: 0 };
+  try { sessionStorage.removeItem(ORDERS_CACHE_KEY); } catch (e) {}
+}
+
+// ---- 以下三個是「只動快取裡的那一筆」，避免每做一個小動作就整份訂單重讀 ----
+// 後台每天最花讀取額度的就是這件事：改一個小地方 → 整份 200 筆重讀一次。
+// 我們寫進資料庫的內容自己最清楚，直接同步到快取即可，資料不會不一致
+function patchOrderInCache(orderId, changes) {
+  if (!ordersCache.data) return;
+  const target = ordersCache.data.find(o => o.id === orderId);
+  if (!target) return;
+  Object.assign(target, changes);
+  persistOrdersCache();
+}
+
+function removeOrderFromCache(orderId) {
+  if (!ordersCache.data) return;
+  ordersCache.data = ordersCache.data.filter(o => o.id !== orderId);
+  persistOrdersCache();
+}
+
+function addOrderToCache(order) {
+  if (!ordersCache.data) return;
+  // 列表是依建立時間新到舊排序，新訂單直接放最前面
+  ordersCache.data = [order, ...ordersCache.data.filter(o => o.id !== order.id)];
+  persistOrdersCache();
 }
 
 async function loadAndRenderOrders(forceRefresh) {
@@ -374,33 +599,19 @@ async function loadAndRenderOrders(forceRefresh) {
   const line = document.getElementById('ordersListLine');
   try {
     const orders = await getOrdersForAdmin(forceRefresh);
-
-    console.log(`[訂單診斷] 加載總數：${orders.length} 筆訂單`);
-
-    // 按 orderType 分類，方便診斷
-    const orderTypeCounts = {};
-    orders.forEach(o => {
-      const ot = o.orderType || 'undefined';
-      const dm = o.deliveryMethod || 'undefined';
-      const key = `orderType=${ot}, deliveryMethod=${dm}`;
-      orderTypeCounts[key] = (orderTypeCounts[key] || 0) + 1;
-    });
-    console.log('[訂單診斷] 訂單類型分布：', orderTypeCounts);
+    renderMigrationNoticeIfNeeded();
 
     // 左右兩欄只依「現貨 / 含預購」區分，不再把宅配訂單另外挑到右邊。
     // （原本宅配單被歸到右欄，結果全是現貨商品的宅配單出現在「含預購」欄位，看起來像跑錯地方。）
     // 宅配單靠卡片上的紫色「宅配」標籤和「待轉帳／已匯款」標籤區分即可；
     // 賣貨便匯出那邊本來就會自動排除宅配單，不會因為放在左欄而匯錯。
     // 注意：舊訂單的 deliveryMethod 可能是 undefined（在新增此欄位之前的訂單），一律當作超商處理
-    const cvsOrders = orders.filter(o => o.orderType === 'cvs');
-    const lineOrders = orders.filter(o => o.orderType !== 'cvs');
+    // 保險起見再濾一次未出貨（舊資料還沒補欄位時是用舊方式撈回來的）
+    const pending = orders.filter(o => !o.shippedAt);
+    seedExportPreorderSelection(pending);
 
-    console.log(`[訂單診斷] 超商現貨：${cvsOrders.length} 筆 / LINE含預購+宅配：${lineOrders.length} 筆`);
-
-    seedExportPreorderSelection(orders);
-
-    renderOrderColumn(cvs, cvsOrders, 'cvs');
-    renderOrderColumn(line, lineOrders, 'line');
+    renderOrderColumn(cvs, pending.filter(o => o.orderType === 'cvs'), 'cvs');
+    renderOrderColumn(line, pending.filter(o => o.orderType !== 'cvs'), 'line');
 
   } catch (err) {
     console.error(err);
@@ -410,9 +621,96 @@ async function loadAndRenderOrders(forceRefresh) {
   }
 }
 
+// 舊訂單還沒補上 shipped 欄位時，在訂單頁最上面顯示一塊提醒＋一鍵補資料的按鈕。
+// 沒補之前系統會自動用舊方式讀取，功能一切正常，只是省不到讀取額度
+function renderMigrationNoticeIfNeeded() {
+  const wrap = document.getElementById('ordersMigrationNotice');
+  if (!wrap) return;
+  if (!shippedMigrationNeeded) { wrap.innerHTML = ''; return; }
+
+  wrap.innerHTML = `
+    <div class="admin-card" style="background:#fff8f5; border:1px solid var(--c-orange); margin-bottom:16px">
+      <div style="font-size:13px; font-weight:700; color:var(--c-coffee); margin-bottom:6px">
+        ${icon('alert-circle', 15)} 建議執行一次資料升級（只需要按一次）
+      </div>
+      <p style="font-size:12px; color:var(--c-rose-text); line-height:1.8; margin-bottom:10px">
+        為了讓後台平常只載入「待出貨」的訂單、不要每次都把已出貨的歷史訂單一起讀回來（這是之前 Firestore 額度被用完、
+        客人結帳失敗的主因），需要幫現有訂單補上一個標記欄位。<br>
+        這個動作只是幫每張舊訂單補上「有沒有出貨」的標記，<strong>不會改到金額、商品或任何訂單內容</strong>，按一次就好。
+      </p>
+      <button class="btn-primary" id="runOrdersMigrationBtn" style="width:auto; padding:9px 20px">立即執行資料升級</button>
+    </div>
+  `;
+
+  document.getElementById('runOrdersMigrationBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('runOrdersMigrationBtn');
+    btn.disabled = true;
+    btn.textContent = '升級中，請不要關閉頁面...';
+    try {
+      const count = await migrateOrdersShippedField();
+      showToast(`資料升級完成，共處理 ${count} 筆訂單`);
+      invalidateOrdersCache();
+      resetShippedHistory();
+      await loadAndRenderOrders(true);
+    } catch (err) {
+      console.error('訂單資料升級失敗:', err);
+      showToast('資料升級失敗，請稍後再試（訂單資料沒有受到影響）');
+      btn.disabled = false;
+      btn.textContent = '立即執行資料升級';
+    }
+  });
+}
+
 // 記住「已出貨」區塊是不是展開的。存在畫面重繪之外的地方，
 // 這樣標記出貨、編輯訂單之後重畫列表時，展開狀態不會被重設回收起
 const shippedExpanded = new Set();
+
+// ---- 已出貨（歷史）訂單：點開才載入，而且一次只拿 50 筆 ----
+// 這份資料只放在記憶體，不寫進 sessionStorage：歷史訂單資料量會越長越大，
+// 存進瀏覽器容易爆掉，而且它本來就不是每天要看的東西
+const SHIPPED_PAGE_SIZE = 50;
+const shippedHistory = { orders: [], cursor: null, loaded: false, loading: false, done: false };
+
+function resetShippedHistory() {
+  shippedHistory.orders = [];
+  shippedHistory.cursor = null;
+  shippedHistory.loaded = false;
+  shippedHistory.loading = false;
+  shippedHistory.done = false;
+}
+
+// 依建立時間新到舊分批拿，拿回來之後只留已出貨的（未出貨的平常那份已經有了，不重複顯示）。
+// 只用單一欄位的 orderBy，不需要額外建立複合索引
+async function loadMoreShippedHistory() {
+  let q = db.collection(COL.ORDERS).orderBy('createdAt', 'desc').limit(SHIPPED_PAGE_SIZE);
+  if (shippedHistory.cursor) q = q.startAfter(shippedHistory.cursor);
+
+  const snap = await q.get();
+  shippedHistory.loaded = true;
+
+  if (snap.empty) {
+    shippedHistory.done = true;
+    return;
+  }
+
+  shippedHistory.cursor = snap.docs[snap.docs.length - 1];
+  const page = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o => !!o.shippedAt);
+  const seen = new Set(shippedHistory.orders.map(o => o.id));
+  shippedHistory.orders = [...shippedHistory.orders, ...page.filter(o => !seen.has(o.id))];
+
+  // 拿回來的筆數不足一頁，代表已經翻到最底了
+  if (snap.docs.length < SHIPPED_PAGE_SIZE) shippedHistory.done = true;
+}
+
+// 只重畫兩欄訂單，不重新去資料庫拿資料
+function refreshOrderColumns() {
+  const cvs = document.getElementById('ordersListCvs');
+  const line = document.getElementById('ordersListLine');
+  if (!cvs || !line) return;
+  const pending = (ordersCache.data || []).filter(o => !o.shippedAt);
+  renderOrderColumn(cvs, pending.filter(o => o.orderType === 'cvs'), 'cvs');
+  renderOrderColumn(line, pending.filter(o => o.orderType !== 'cvs'), 'line');
+}
 
 // ---- 匯出賣貨便：預購訂單改成手動勾選要匯出哪幾張，不再靠日期區間一次全撈 ----
 // 因為預購訂單是不是「真的到貨、可以出貨」跟下單日期沒有關係（可能等了一個月才到貨），
@@ -436,51 +734,83 @@ function seedExportPreorderSelection(orders) {
   });
 }
 
-function renderOrderColumn(container, orders, colType) {
-  if (orders.length === 0) {
-    container.innerHTML = `<div class="empty-state" style="padding:30px 10px">${icon('clipboard-off', 18)}<p style="margin-top:8px">目前沒有訂單</p></div>`;
-    return;
-  }
-
-  // 分成待處理（未出貨）和已出貨兩組
-  const pending = orders.filter(o => !o.shippedAt);
-  const shipped = orders.filter(o => !!o.shippedAt);
+function renderOrderColumn(container, pending, colType) {
+  // 已出貨的訂單不會跟著平常的訂單一起載入（那是每天都在累積的歷史資料，
+  // 每次都讀回來就是白白消耗 Firestore 額度），要看的時候才分批去拿
+  const shipped = shippedHistory.orders.filter(o =>
+    colType === 'cvs' ? o.orderType === 'cvs' : o.orderType !== 'cvs'
+  );
+  const isOpen = shippedExpanded.has(colType);
 
   let html = '';
 
-  // 待處理訂單（全部顯示）——這才是每天要處理的東西
-  if (pending.length > 0) {
+  if (pending.length === 0) {
+    html += `<div class="empty-state" style="padding:30px 10px">${icon('clipboard-off', 18)}<p style="margin-top:8px">目前沒有待出貨的訂單</p></div>`;
+  } else {
+    // 待處理訂單（全部顯示）——這才是每天要處理的東西
     html += pending.map(order => renderOrderCard(order)).join('');
   }
 
-  // 已出貨訂單預設「全部收起來」，只留一行可以點開的標題。
-  // 原本會先攤開 10 筆，但單子累積到幾十筆之後，光是已出貨的就把畫面拉得很長，
-  // 待處理的訂單反而被擠到看不到，日常操作很不方便
-  if (shipped.length > 0) {
-    const isOpen = shippedExpanded.has(colType);
-    html += `<div style="border-top:1.5px dashed var(--c-blush); margin:12px 0 10px; padding-top:10px">
-      <button id="shipped-toggle-${colType}"
-        style="width:100%; display:flex; align-items:center; gap:6px; background:var(--c-cream); border:0.5px dashed var(--c-rose); color:var(--c-rose-text); border-radius:8px; padding:9px 12px; font-size:12px; cursor:pointer">
-        <span>${icon(isOpen ? 'chevron-down' : 'chevron-right', 14)}</span>
-        <span>${icon('check', 13)} 已出貨（${shipped.length} 筆）</span>
-        <span style="margin-left:auto">${isOpen ? '點此收起' : '點此展開'}</span>
-      </button>
-      <div id="shipped-list-${colType}" style="display:${isOpen ? 'block' : 'none'}; margin-top:8px">
-        ${shipped.map(order => renderOrderCard(order)).join('')}
-      </div>
-    </div>`;
-  }
+  // 已出貨訂單預設不載入也不展開，只留一行可以點開的標題。
+  // 點開才會去資料庫分批拿（一次 50 筆），不點就完全不花讀取額度
+  html += `<div style="border-top:1.5px dashed var(--c-blush); margin:12px 0 10px; padding-top:10px">
+    <button id="shipped-toggle-${colType}"
+      style="width:100%; display:flex; align-items:center; gap:6px; background:var(--c-cream); border:0.5px dashed var(--c-rose); color:var(--c-rose-text); border-radius:8px; padding:9px 12px; font-size:12px; cursor:pointer">
+      <span>${icon(isOpen ? 'chevron-down' : 'chevron-right', 14)}</span>
+      <span>${icon('check', 13)} 已出貨訂單${shippedHistory.loaded ? `（已載入 ${shipped.length} 筆）` : '（點此載入）'}</span>
+      <span style="margin-left:auto">${isOpen ? '點此收起' : (shippedHistory.loaded ? '點此展開' : '尚未載入')}</span>
+    </button>
+    <div id="shipped-list-${colType}" style="display:${isOpen ? 'block' : 'none'}; margin-top:8px">
+      ${shippedHistory.loading
+        ? `<div class="loading-wrap"><div class="spin"></div>載入中...</div>`
+        : (shipped.length === 0
+            ? `<div class="empty-state" style="padding:16px 10px">這一欄目前沒有已出貨的訂單</div>`
+            : shipped.map(order => renderOrderCard(order)).join(''))}
+      ${(isOpen && shippedHistory.loaded && !shippedHistory.done && !shippedHistory.loading)
+        ? `<button id="shipped-more-${colType}" class="btn-icon" style="width:100%; margin-top:8px">再載入更早的訂單</button>`
+        : ''}
+    </div>
+  </div>`;
 
   container.innerHTML = html;
 
-  document.getElementById(`shipped-toggle-${colType}`)?.addEventListener('click', () => {
-    if (shippedExpanded.has(colType)) shippedExpanded.delete(colType);
-    else shippedExpanded.add(colType);
-    renderOrderColumn(container, orders, colType);
+  document.getElementById(`shipped-toggle-${colType}`)?.addEventListener('click', async () => {
+    if (shippedExpanded.has(colType)) {
+      shippedExpanded.delete(colType);
+      renderOrderColumn(container, pending, colType);
+      return;
+    }
+    shippedExpanded.add(colType);
+    // 第一次展開才去資料庫拿，之後切換展開/收起都用已經拿到的資料
+    if (!shippedHistory.loaded) {
+      shippedHistory.loading = true;
+      renderOrderColumn(container, pending, colType);
+      try {
+        await loadMoreShippedHistory();
+      } catch (err) {
+        console.error('載入已出貨訂單失敗:', err);
+        showToast('載入已出貨訂單失敗，請稍後再試');
+      }
+      shippedHistory.loading = false;
+    }
+    refreshOrderColumns();
   });
 
-  // 綁定所有訂單事件
-  orders.forEach(order => {
+  document.getElementById(`shipped-more-${colType}`)?.addEventListener('click', async () => {
+    shippedHistory.loading = true;
+    renderOrderColumn(container, pending, colType);
+    try {
+      await loadMoreShippedHistory();
+    } catch (err) {
+      console.error('載入已出貨訂單失敗:', err);
+      showToast('載入已出貨訂單失敗，請稍後再試');
+    }
+    shippedHistory.loading = false;
+    refreshOrderColumns();
+  });
+
+  // 綁定所有訂單事件（待出貨 + 已載入的已出貨都要綁）
+  [...pending, ...(isOpen ? shipped : [])].forEach(order => {
     document.getElementById(`del-order-${order.id}`)?.addEventListener('click', () => deleteOrder(order.id));
     document.getElementById(`ship-order-${order.id}`)?.addEventListener('click', () => openShipModal(order));
     document.getElementById(`edit-order-${order.id}`)?.addEventListener('click', () => openEditOrderModal(order));
@@ -651,7 +981,8 @@ async function togglePaymentConfirmed(order) {
   if (newValue && !confirm(`確定要標記「${order.lineName || '此訂單'}」已完成匯款嗎？`)) return;
   await db.collection(COL.ORDERS).doc(order.id).update({ paymentConfirmed: newValue });
   showToast(newValue ? '已標記為已匯款' : '已取消已匯款標記');
-  invalidateOrdersCache();
+  order.paymentConfirmed = newValue;
+  patchOrderInCache(order.id, { paymentConfirmed: newValue });
   loadAndRenderOrders();
 }
 
@@ -659,7 +990,9 @@ async function deleteOrder(orderId) {
   if (!confirm('確定要刪除這筆訂單紀錄嗎？此動作無法復原。')) return;
   await db.collection(COL.ORDERS).doc(orderId).delete();
   showToast('訂單已刪除');
-  invalidateOrdersCache();
+  removeOrderFromCache(orderId);
+  // 已出貨的歷史清單裡也可能有這一筆（從展開的已出貨區塊刪的），一併移除
+  shippedHistory.orders = shippedHistory.orders.filter(o => o.id !== orderId);
   loadAndRenderOrders();
 }
 
@@ -709,14 +1042,22 @@ function openShipModal(order) {
     if (!confirm('確定要取消這筆訂單的出貨標記嗎？')) return;
     await db.collection(COL.ORDERS).doc(order.id).update({
       shippedAt: firebase.firestore.FieldValue.delete(),
-      trackingNo: firebase.firestore.FieldValue.delete()
+      trackingNo: firebase.firestore.FieldValue.delete(),
+      // shipped 一定要跟著改回 false，否則這張單會從「待出貨」查詢裡消失（後台就看不到它了）
+      shipped: false
     });
     // 取消出貨代表這筆訂單重新回到待處理，採購需求也會跟著回來，
     // 所以先前出貨時扣掉的已採購數量要加回去，帳面才不會變成「需求10、已採購0」
     await adjustPurchasedForOrder(order, +1);
     close();
     showToast('已取消出貨標記');
-    invalidateOrdersCache();
+    // 出貨欄位被清掉了，快取裡也同步清成 null（判斷有沒有出貨都是看 !order.shippedAt，null 就等於未出貨）
+    order.shippedAt = null;
+    order.trackingNo = null;
+    order.shipped = false;
+    // 這張單重新變成「待出貨」，要放回平常的清單、並從已載入的歷史清單移掉
+    shippedHistory.orders = shippedHistory.orders.filter(o => o.id !== order.id);
+    addOrderToCache(order);
     loadAndRenderOrders();
     loadAndRenderFailedOrders();
   });
@@ -733,7 +1074,8 @@ function openShipModal(order) {
     btn.textContent = '儲存中...';
 
     try {
-      const updateData = { shippedAt };
+      // shipped 這個布林欄位是給「平常只載入未出貨訂單」的查詢用的，跟 shippedAt 一定要同進同退
+      const updateData = { shippedAt, shipped: true };
       if (trackingNo) updateData.trackingNo = trackingNo;
       else updateData.trackingNo = firebase.firestore.FieldValue.delete();
 
@@ -745,7 +1087,15 @@ function openShipModal(order) {
       }
       close();
       showToast('出貨資訊已儲存');
-      invalidateOrdersCache();
+      // 出貨後這張單就從「待出貨」清單移出去了（平常的清單只放未出貨的）。
+      // 如果歷史清單已經載入過，就順手把它加進去，這樣展開已出貨也看得到它
+      order.shippedAt = shippedAt;
+      order.trackingNo = trackingNo || null;
+      order.shipped = true;
+      removeOrderFromCache(order.id);
+      if (shippedHistory.loaded && !shippedHistory.orders.some(o => o.id === order.id)) {
+        shippedHistory.orders = [order, ...shippedHistory.orders];
+      }
       loadAndRenderOrders();
     } catch (err) {
       console.error(err);
@@ -856,7 +1206,7 @@ function closeEditOrderModal() {
   if (order && order.manuallyCreated && (order.items || []).length === 0) {
     db.collection(COL.ORDERS).doc(order.id).delete()
       .then(() => {
-        invalidateOrdersCache();
+        removeOrderFromCache(order.id);
         loadAndRenderOrders();
       })
       .catch(err => console.error('清除空白訂單失敗:', err));
@@ -1183,9 +1533,27 @@ async function saveEditedOrder() {
     // 如果這裡不更新，剛剛才填好商品存檔的訂單會因為快照還是空的而被誤刪
     order.items = normalizedItems;
 
+    // 剛剛寫進資料庫的內容自己最清楚，直接同步到快取那一筆，不用整份訂單重讀一次
+    const savedChanges = {
+      items: normalizedItems,
+      orderType: newOrderType,
+      subtotal,
+      manualDiscount,
+      shippingFee,
+      depositReceived,
+      total,
+      lineName: newLineName,
+      cvsName: newCvsName,
+      cvsPhone: newCvsPhone,
+      cvsStoreName: newCvsStoreName,
+      cvsStore: newCvsStore,
+      address: newAddress
+    };
+    Object.assign(order, savedChanges);
+    patchOrderInCache(order.id, savedChanges);
+
     showToast('訂單已更新');
     closeEditOrderModal();
-    invalidateOrdersCache();
     loadAndRenderOrders();
   } catch (err) {
     console.error('編輯訂單失敗:', err);
@@ -1478,7 +1846,23 @@ async function doMergeOrders() {
 
     document.getElementById('mergeOrderModalOverlay')?.remove();
     showToast(`已併單，保留編號 ${keeper.orderNo || ''}`);
-    invalidateOrdersCache();
+    // 保留的那張直接更新快取、被併掉的從快取移除，不用整份訂單重讀。
+    // mergedAt / lastEditedAt 是伺服器時間戳，畫面上沒用到，快取就不放，避免存進假的值
+    const mergedChanges = {
+      items: t.items,
+      orderType: t.anyPreorder ? 'line' : 'cvs',
+      subtotal: t.subtotal,
+      discountAmount: t.discountAmount,
+      manualDiscount: t.manualDiscount,
+      depositReceived: t.depositReceived,
+      shippingFee: t.shippingFee,
+      total: t.total,
+      couponCode: t.couponCode,
+      mergedFrom: losers.map(o => o.orderNo || o.id)
+    };
+    Object.assign(keeper, mergedChanges);
+    patchOrderInCache(keeper.id, mergedChanges);
+    losers.forEach(o => removeOrderFromCache(o.id));
     loadAndRenderOrders();
   } catch (err) {
     console.error('併單失敗:', err);
@@ -1563,11 +1947,22 @@ async function exportOrdersToExcel() {
     const startDate = startDateStr ? new Date(startDateStr + 'T00:00:00') : null;
     const endDate = endDateStr ? new Date(endDateStr + 'T23:59:59') : null;
 
-    // 這裡不能再用 where('orderType','==','cvs') 篩選：那樣只會撈到現貨訂單，
-    // 含預購的訂單（orderType='line'）永遠不會被匯出。改成全部撈回來後在前端判斷，
-    // 也順便避開「where + orderBy 不同欄位需要建立複合索引」的限制
-    const snap = await db.collection(COL.ORDERS).get();
-    const allOrders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // 匯出需要的資料只有兩種來源，不需要把整個訂單集合撈回來（訂單越積越多會越讀越兇）：
+    //   1. 預購訂單 → 就是你在右邊清單勾選的那幾張，都是未出貨的，平常的快取裡就有
+    //   2. 現貨訂單 → 依日期區間匯出，所以只要撈這段期間建立的訂單就夠了
+    //      （用單一欄位的範圍查詢，不需要另外建立複合索引；也保留原本「已出貨的仍可重新匯出」的行為）
+    const pendingOrders = await getOrdersForAdmin();
+    const byId = new Map(pendingOrders.map(o => [o.id, o]));
+
+    if (wantInstock && startDate && endDate) {
+      const rangeSnap = await db.collection(COL.ORDERS)
+        .where('createdAt', '>=', startDate)
+        .where('createdAt', '<=', endDate)
+        .get();
+      rangeSnap.docs.forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
+    }
+
+    const allOrders = [...byId.values()];
 
     const orders = selectOrdersForExport({
       orders: allOrders,
