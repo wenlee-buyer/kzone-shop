@@ -307,9 +307,14 @@ function filterAndRender() {
     return renderProductCard({ ...p, categoryName: cat ? cat.name : '' }, settings.watermarkText);
   }).join('');
 
-  // 「查看全部商品」按鈕改為固定顯示，方便前往完整商品列表頁（含未精選商品）
+  // 「查看全部商品」按鈕只在「全部」「最新上架」這兩種概覽視圖顯示（因為這時只列出精選/新品，
+  // 還有更多商品沒列出，需要連到完整列表頁）；選了特定分類時，該分類商品已經完整顯示在這頁，
+  // 按鈕反而讓人誤會還有沒顯示的商品，所以這時要隱藏
   const moreRow = document.querySelector('.more-row');
-  if (moreRow) moreRow.style.display = '';
+  if (moreRow) {
+    const isOverviewView = currentCatFilter === 'all' || currentCatFilter === 'new';
+    moreRow.style.display = isOverviewView ? '' : 'none';
+  }
 }
 
 init();
