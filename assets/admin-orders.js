@@ -1103,7 +1103,8 @@ function openShipModal(order) {
 let editOrderState = {
   order: null,
   items: [], // 編輯中的商品清單（複製自 order.items，深複製避免直接改到原始資料）
-  allProducts: null // 快取一次「+新增商品」用的商品清單，避免每次開啟都重新打 Firestore
+  allProducts: null, // 快取「+新增商品」用的商品清單，避免每次開啟都重新打 Firestore
+  allProductsAt: 0   // 上面那份清單是什麼時候讀的（超過時效或商品有異動就重讀）
 };
 
 function openEditOrderModal(order) {
@@ -1313,11 +1314,25 @@ function updateEditOrderSummary() {
 }
 
 // ---- 「+ 新增商品」選擇器：從商品目錄挑一個商品加進訂單 ----
+// 商品清單會暫存起來（避免每次開啟都重讀一次全部商品），但暫存不能是永久的：
+// 你在「商品管理」新增了款式之後回來加訂單，如果還在用舊的暫存，新款式會選不到。
+// 所以這裡有兩道保險：存商品時會主動清掉暫存（見 admin-products.js 的 saveProduct），
+// 加上 2 分鐘後自動失效，就算哪天漏了主動清除也會自己恢復正常
+const ADMIN_PRODUCTS_CACHE_TTL = 2 * 60 * 1000;
+
+function invalidateAdminProductsCache() {
+  editOrderState.allProducts = null;
+  editOrderState.allProductsAt = 0;
+}
+
 async function openAddOrderItemPicker() {
-  if (!editOrderState.allProducts) {
+  const cacheExpired = !editOrderState.allProductsAt ||
+    (Date.now() - editOrderState.allProductsAt >= ADMIN_PRODUCTS_CACHE_TTL);
+  if (!editOrderState.allProducts || cacheExpired) {
     try {
       const snap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
       editOrderState.allProducts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      editOrderState.allProductsAt = Date.now();
     } catch (err) {
       console.error(err);
       showToast('載入商品清單失敗，請稍後再試');

@@ -215,6 +215,7 @@ async function toggleArchiveProduct(p) {
   showToast(p.archived ? '已取消封存' : '商品已封存，前台將不再顯示');
   // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
   await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+  if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
   loadAndRenderProductsTable();
 }
 
@@ -224,6 +225,7 @@ async function deleteProductPermanently(p) {
   showToast('商品已永久刪除');
   // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
   await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+  if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
   loadAndRenderProductsTable();
 }
 
@@ -370,6 +372,9 @@ async function saveProductRowOrder() {
     });
     await batch.commit();
     await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+    // 訂單編輯的「+新增商品」會暫存一份商品清單，商品一有異動就要清掉，
+    // 否則剛剛新增的款式在加訂單時會選不到（清單還是舊的）
+    if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
     showToast('排序已儲存');
     await loadAndRenderProductsTable();
   } catch (err) {
@@ -957,6 +962,9 @@ async function saveProduct(styles) {
 
     // 商品有異動：重建前台目錄快照，並清掉自己瀏覽器的快取
     await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+    // 訂單編輯的「+新增商品」會暫存一份商品清單，商品一有異動就要清掉，
+    // 否則剛剛新增的款式在加訂單時會選不到（清單還是舊的）
+    if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
     closeProductEditor();
     loadAndRenderProductsTable();
 
