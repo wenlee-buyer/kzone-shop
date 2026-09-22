@@ -360,6 +360,47 @@ function getProductCategoryIds(product) {
   return [];
 }
 
+// ---- 分類的主從關係：沒有 parentId 的是主分類，有 parentId 的是掛在它底下的子分類 ----
+// 只做兩層（主分類 → 子分類），不做更深的階層：階層一深，客人要點很多次才找得到東西，
+// 後台整理起來也很容易亂掉。兩層對代購網站來說已經很夠用了
+
+function isMainCategory(cat) {
+  return !cat.parentId;
+}
+
+function getMainCategories(categories) {
+  return (categories || []).filter(isMainCategory);
+}
+
+function getSubCategories(categories, parentId) {
+  return (categories || []).filter(c => c.parentId === parentId);
+}
+
+// 點主分類時，底下所有子分類的商品也要一起列出來，
+// 所以要把「這個分類本身 + 它的子分類」的 ID 全部收集起來
+function getCategoryWithChildIds(categories, catId) {
+  const ids = [catId];
+  (categories || []).forEach(c => {
+    if (c.parentId === catId) ids.push(c.id);
+  });
+  return ids;
+}
+
+// 這個商品算不算在某個分類底下（點主分類會連子分類的商品一起算進來）
+function productInCategory(product, catId, categories) {
+  const wanted = new Set(getCategoryWithChildIds(categories, catId));
+  return getProductCategoryIds(product).some(id => wanted.has(id));
+}
+
+// 選到某個分類時，分類列下方那排子分類要顯示誰的孩子：
+// 選主分類就顯示它自己的孩子；選子分類則顯示「兄弟姊妹」（也就是它爸爸的孩子），
+// 這樣客人點進子分類之後還能直接切換到同層的其他子分類，不用先退回上一層
+function getSubCategoryBarParentId(categories, catFilter) {
+  const current = (categories || []).find(c => c.id === catFilter);
+  if (!current) return null; // 全部／最新上架／現貨這種虛擬分類沒有子分類
+  return current.parentId || current.id;
+}
+
 // 運費規則：滿5000免運，其他一律38元
 // 宅配訂單（商品太大/太重需要宅配的）運費固定80元，不適用滿額免運規則
 function calcShippingFee(orderTotal, hasHomeDelivery) {

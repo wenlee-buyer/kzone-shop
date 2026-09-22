@@ -49,6 +49,7 @@
     <button class="sn-item active" data-cat="all">全部</button>
   </div>
 </div>
+<div class="subcat-bar" id="subCatBar" style="display:none"></div>
 
 <div class="hero">
   <div class="container">
@@ -62,15 +63,6 @@
   </div>
 </div>
 
-
-<div class="sec-label"><div class="container"><span>現貨 / 預購</span><div class="line"></div></div></div>
-<div class="stock-tabs">
-  <div class="container">
-    <button class="stab active" data-stock="all"><span class="stab-inner">全部商品</span></button>
-    <button class="stab" data-stock="instock"><span class="stab-inner">現貨</span></button>
-    <button class="stab" data-stock="preorder"><span class="stab-inner">預購</span></button>
-  </div>
-</div>
 
 <div class="sec-label"><div class="container"><span>角色篩選（可複選）</span><div class="line"></div></div></div>
 <div class="tag-bar">
@@ -136,7 +128,6 @@ let categories = [];
 let tags = [];
 let settings = {};
 let currentCatFilter = 'all';
-let currentStockFilter = 'all';
 let activeTagFilters = new Set();
 
 async function init() {
@@ -200,23 +191,22 @@ function applySettings() {
   document.getElementById('communityText').textContent = settings.lineCommunityText;
 }
 
+// 分類列（含子分類下拉與子分類列）改用共用函式繪製，跟商品列表頁保持同一套行為
 function renderCategoryNav() {
-  const list = document.getElementById('srcNavList');
-  let html = `<button class="sn-item ${currentCatFilter === 'all' ? 'active' : ''}" data-cat="all">全部</button>`;
-  html += `<button class="sn-item ${currentCatFilter === 'new' ? 'active' : ''}" data-cat="new">✨ 最新上架</button>`;
-  categories.forEach(cat => {
-    html += `<button class="sn-item ${currentCatFilter === cat.id ? 'active' : ''}" data-cat="${cat.id}">${escapeHtml(cat.name)}</button>`;
-  });
-  list.innerHTML = html;
-  list.querySelectorAll('.sn-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      list.querySelectorAll('.sn-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentCatFilter = btn.dataset.cat;
-      updateCategoryUrl(currentCatFilter);
-      filterAndRender();
-    });
-  });
+  renderCategoryNavInto(
+    document.getElementById('srcNavList'),
+    document.getElementById('subCatBar'),
+    {
+      categories,
+      currentCatFilter,
+      onSelect: (catId) => {
+        currentCatFilter = catId;
+        updateCategoryUrl(currentCatFilter);
+        renderCategoryNav(); // 重畫一次，選中狀態與子分類列才會跟著更新
+        filterAndRender();
+      }
+    }
+  );
 }
 
 function renderTagFilters() {
@@ -250,14 +240,6 @@ function renderTagFilters() {
     });
   });
 
-  document.querySelectorAll('.stab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentStockFilter = btn.dataset.stock;
-      filterAndRender();
-    });
-  });
 }
 
 async function loadProducts() {
@@ -274,9 +256,9 @@ async function loadProducts() {
 }
 
 function filterAndRender() {
-  let filtered = currentStockFilter === 'all'
-    ? allProducts.slice()
-    : allProducts.filter(p => productHasStockType(p, currentStockFilter));
+  // 「現貨」是虛擬分類（系統依商品目前的現貨/預購設定自動判斷），
+  // 其他就是真的分類；點主分類時，底下子分類的商品也會一起帶出來
+  let filtered = filterProductsByCatFilter(allProducts.slice(), currentCatFilter, categories);
 
   if (currentCatFilter === 'new') {
     filtered = filterAndSortNewProducts(filtered);
@@ -284,8 +266,9 @@ function filterAndRender() {
     const featuredOnly = filtered.filter(p => p.featured);
     filtered = featuredOnly.length > 0 ? featuredOnly : filtered;
     filtered = sortBySortOrderSoldOutLast(filtered);
+  } else if (currentCatFilter === 'instock') {
+    filtered = sortBySortOrderSoldOutLast(filtered);
   } else {
-    filtered = filtered.filter(p => getProductCategoryIds(p).includes(currentCatFilter));
     filtered = sortBySortOrderSoldOutLast(filtered, currentCatFilter);
   }
 

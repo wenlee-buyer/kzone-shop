@@ -122,6 +122,93 @@ img { max-width: 100%; display: block; }
   .sn-item.active:hover { border-bottom-color: var(--c-orange); }
 }
 
+/* ---------- 主分類的子分類下拉選單（只在有滑鼠的裝置出現） ---------- */
+/* 手機沒有「滑鼠滑過去」這個動作，所以觸控裝置一律走下方的子分類列，不會用到這個下拉 */
+.sn-group { position: relative; display: inline-flex; }
+.sn-caret { margin-left: 3px; opacity: 0.55; font-size: 10px; }
+.sn-dropdown { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .sn-dropdown {
+    display: block;
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 150px;
+    background: #fff;
+    border: 0.5px solid var(--c-blush);
+    border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(90, 70, 60, 0.13);
+    padding: 4px 0;
+    z-index: 60;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+  }
+  /* 下拉選單上方的小三角形，視覺上跟主分類連在一起 */
+  .sn-dropdown::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    margin-left: -5px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 5px solid #fff;
+  }
+  .sn-group:hover .sn-dropdown,
+  .sn-dropdown:hover { opacity: 1; visibility: visible; }
+  .sn-dropdown button {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-rose-text);
+    white-space: nowrap;
+    cursor: pointer;
+    text-align: center;
+  }
+  .sn-dropdown button:hover { background: var(--c-cream); color: var(--c-coffee); }
+  .sn-dropdown button.active { color: var(--c-coffee); }
+}
+
+/* ---------- 子分類列（手機主要靠這排切換，電腦版也會一起顯示） ---------- */
+/* 只有「選到的主分類底下真的有子分類」時才會出現這一排，第一顆永遠是已選中的「全部」，
+   讓客人一眼看出現在顯示的就是全部商品，子分類只是想縮小範圍時才用 */
+.subcat-bar {
+  background: var(--c-cream);
+  border-bottom: 0.5px solid var(--c-blush);
+  padding: 9px 16px;
+}
+.subcat-bar .container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: center;
+}
+.subcat-chip {
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 0.5px solid var(--c-rose);
+  background: #fff;
+  color: var(--c-rose-text);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.subcat-chip.active {
+  background: var(--c-orange);
+  border-color: var(--c-orange);
+  color: #fff;
+}
+
 /* ---------- Hero ---------- */
 .hero {
   background: var(--c-cream);
