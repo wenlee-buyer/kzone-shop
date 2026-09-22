@@ -1,0 +1,997 @@
+// ============================================
+// K.Zone 後台 - 商品管理模組
+// ============================================
+
+let productsPageState = {
+  filterArchived: false,
+  filterSoldOut: false,
+  filterCat: 'all',
+  editingProduct: null,
+  pendingImages: [], // { blob, dataUrl, url(已上傳後) }，陣列順序 = 前台顯示順序（第一張是封面）
+  pendingVideo: null // { file, previewUrl, uploaded, url(已上傳後) } 或 null（沒有影片）
+};
+
+async function renderProductsPage() {
+  const main = document.getElementById('adminMain');
+  main.innerHTML = `
+    <div class="admin-header">
+      <div>
+        <div class="admin-title">商品管理</div>
+        <div class="admin-subtitle">新增、編輯、封存你的商品</div>
+      </div>
+      <div class="admin-btn-row">
+        <button class="btn-secondary" id="toggleSoldOutBtn" style="width:auto">查看已售完商品</button>
+        <button class="btn-secondary" id="toggleArchivedBtn" style="width:auto">查看已封存商品</button>
+        <button class="btn-primary" id="addProductBtn" style="width:auto">+ 新增商品</button>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center">
+        <select id="catFilterSelect" style="border:0.5px solid var(--c-rose); border-radius:8px; padding:8px 10px; font-size:13px; color:var(--c-coffee)">
+          <option value="all">全部來源分類</option>
+          <option value="__orphan__">⚠ 分類已被刪除的商品</option>
+        </select>
+        <button class="btn-secondary" id="saveProductOrderBtn" style="width:auto">儲存排序</button>
+        <button class="btn-secondary" id="rebuildCatalogBtn" style="width:auto" title="前台是讀「商品目錄快照」來省流量。正常情況下改商品時會自動重建，萬一前台顯示的內容跟後台對不上，可以手動按這個">同步到前台</button>
+        <span style="font-size:11px; color:var(--c-rose-text)">直接拖拉商品圖片格子即可調整順序（首頁精選排序請到「首頁排序」頁面）</span>
+      </div>
+      <div id="productsTableWrap">
+        <div class="loading-wrap"><div class="spin"></div>載入商品中...</div>
+      </div>
+    </div>
+  `;
+
+  // 下拉選單依「主分類 → 子分類」的層級排列，子分類前面加個符號才看得出從屬關係
+  const catSelect = document.getElementById('catFilterSelect');
+  const addCatOption = (cat, isSub) => {
+    const opt = document.createElement('option');
+    opt.value = cat.id;
+    opt.textContent = isSub ? `　└ ${cat.name}` : cat.name;
+    catSelect.appendChild(opt);
+  };
+  getMainCategories(appState.categories).forEach(m => {
+    addCatOption(m, false);
+    getSubCategories(appState.categories, m.id).forEach(sub => addCatOption(sub, true));
+  });
+  // 上層已被刪除的分類也要能選到，才找得到掛在上面的商品
+  const shownCatIds = new Set(getMainCategories(appState.categories)
+    .flatMap(m => [m.id, ...getSubCategories(appState.categories, m.id).map(s => s.id)]));
+  appState.categories.filter(c => !shownCatIds.has(c.id)).forEach(c => addCatOption(c, false));
+  catSelect.addEventListener('change', () => {
+    productsPageState.filterCat = catSelect.value;
+    loadAndRenderProductsTable();
+  });
+
+  document.getElementById('saveProductOrderBtn').addEventListener('click', saveProductRowOrder);
+  document.getElementById('rebuildCatalogBtn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = '同步中...';
+    try {
+      const count = await rebuildCatalog();
+      showToast(`已同步 ${count} 個商品到前台`);
+    } catch (err) {
+      console.error(err);
+      showToast('同步失敗，請稍後再試');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '同步到前台';
+    }
+  });
+  document.getElementById('addProductBtn').addEventListener('click', () => openProductEditor(null));
+  document.getElementById('toggleArchivedBtn').addEventListener('click', (e) => {
+    productsPageState.filterArchived = !productsPageState.filterArchived;
+    productsPageState.filterSoldOut = false;
+    document.getElementById('toggleSoldOutBtn').textContent = '查看已售完商品';
+    e.target.textContent = productsPageState.filterArchived ? '查看上架中商品' : '查看已封存商品';
+    loadAndRenderProductsTable();
+  });
+  document.getElementById('toggleSoldOutBtn').addEventListener('click', (e) => {
+    productsPageState.filterSoldOut = !productsPageState.filterSoldOut;
+    e.target.textContent = productsPageState.filterSoldOut ? '查看全部商品' : '查看已售完商品';
+    loadAndRenderProductsTable();
+  });
+
+  await loadAndRenderProductsTable();
+}
+
+async function loadAndRenderProductsTable() {
+  const wrap = document.getElementById('productsTableWrap');
+  wrap.innerHTML = `<div class="loading-wrap"><div class="spin"></div>載入中...</div>`;
+
+  try {
+    let query = db.collection(COL.PRODUCTS).where('archived', '==', productsPageState.filterArchived);
+    const snap = await query.get();
+    let products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    if (productsPageState.filterCat === '__orphan__') {
+      // 分類被刪除後，商品身上還留著那個查不到主人的分類 ID，平常在「全部來源分類」裡會混在一起很難找，
+      // 這裡專門挑出「掛的分類 ID，沒有一個對得上現在還存在的分類」的商品
+      products = products.filter(p => hasOrphanedCategory(p, appState.categories));
+    } else if (productsPageState.filterCat !== 'all') {
+      // 跟前台一致：選主分類時，掛在它底下子分類的商品也會一起列出來
+      products = products.filter(p => productInCategory(p, productsPageState.filterCat, appState.categories));
+    }
+    if (productsPageState.filterSoldOut) {
+      products = products.filter(p => isProductSoldOut(p));
+    }
+
+    // 依照排序值顯示，讓拖拉調整時看到的順序就是目前實際的順序。
+    // 有選特定分類時，用該分類專屬的排序值（同商品掛不同分類可以各自排序）；
+    // 選「全部來源分類」或「分類已被刪除」時則用共用的 sortOrder（跟首頁排序頁共用同一個值，
+    // 因為「分類已被刪除」這個檢視本來就不對應任何一個真實分類，沒有專屬排序值可以用）
+    const sortCatId = (productsPageState.filterCat !== 'all' && productsPageState.filterCat !== '__orphan__')
+      ? productsPageState.filterCat
+      : null;
+    products.sort((a, b) => getCategorySortOrder(a, sortCatId) - getCategorySortOrder(b, sortCatId));
+
+    if (products.length === 0) {
+      wrap.innerHTML = `<div class="empty-state">${icon('package-off', 18)}目前沒有商品</div>`;
+      return;
+    }
+
+    wrap.innerHTML = `
+      <div class="pg-grid" id="productsGrid">
+        ${products.map((p, idx) => renderProductTile(p, idx)).join('')}
+      </div>
+    `;
+
+    products.forEach(p => {
+      document.getElementById(`edit-${p.id}`)?.addEventListener('click', () => openProductEditor(p));
+      document.getElementById(`duplicate-${p.id}`)?.addEventListener('click', () => duplicateProduct(p));
+      document.getElementById(`archive-${p.id}`)?.addEventListener('click', () => toggleArchiveProduct(p));
+      document.getElementById(`delete-${p.id}`)?.addEventListener('click', () => deleteProductPermanently(p));
+    });
+
+    initProductGridDragReorder();
+
+  } catch (err) {
+    console.error(err);
+    wrap.innerHTML = `<div class="empty-state">${icon('alert-circle', 18)}載入失敗</div>`;
+  }
+}
+
+// 商品掛的分類 ID，有沒有一個是「查不到本尊」的（分類已經被刪除，但商品身上還留著舊的關聯）。
+// 這是後台商品管理「⚠ 分類已被刪除的商品」篩選要用的判斷式，抽成獨立函式方便測試
+function hasOrphanedCategory(product, categories) {
+  const catIds = product.categoryIds && Array.isArray(product.categoryIds)
+    ? product.categoryIds
+    : (product.categoryId ? [product.categoryId] : []);
+  if (catIds.length === 0) return false; // 完全沒掛分類是另一個問題，不算「分類被刪除」
+  const existingIds = new Set(categories.map(c => c.id));
+  return catIds.some(id => !existingIds.has(id));
+}
+
+// 跟首頁排序頁一樣，一格就是一個商品：圖片＋名稱＋狀態標籤，下面接編輯等操作按鈕。
+// 拖曳格子本身調整順序，不用再找隱藏的拖曳把手
+function renderProductTile(p, idx) {
+  const styles = normalizeStyles(p.styles);
+  // 同時相容新格式(categoryIds陣列)和舊格式(categoryId字串)
+  const catIds = p.categoryIds && Array.isArray(p.categoryIds) ? p.categoryIds : (p.categoryId ? [p.categoryId] : []);
+  const catNames = catIds.map(id => appState.categories.find(c => c.id === id)?.name).filter(Boolean);
+  const stockPill = styles.length > 0
+    ? (isMixedStockProduct(p)
+        ? `<span class="pill pill-instock">現貨</span><span class="pill pill-preorder" style="margin-left:2px">預購</span>`
+        : (getStyleStockType(p, styles[0].name) === 'preorder'
+            ? `<span class="pill pill-preorder">預購</span>`
+            : `<span class="pill pill-instock">現貨</span>`))
+    : (p.stockType === 'preorder'
+        ? `<span class="pill pill-preorder">預購</span>`
+        : `<span class="pill pill-instock">現貨</span>`);
+  const deliveryPill = p.deliveryMethod === 'homeDelivery' ? `<span class="pill" style="background:#e6e0f7;color:#5a4a9c">宅配</span>` : '';
+  const archivedPill = p.archived ? `<span class="pill pill-archived">已封存</span>` : '';
+  const soldOutPill = isProductSoldOut(p) ? `<span class="pill" style="background:#fbe1e1;color:#a33">已售完</span>` : '';
+  const orphanPill = hasOrphanedCategory(p, appState.categories) ? `<span class="pill" style="background:#fff3cd;color:#856404" title="這個商品掛的分類已經被刪除了，前台分類列找不到它">⚠ 分類已刪除</span>` : '';
+  const img = (p.images && p.images[0]) || '';
+  const isSoldOut = isProductSoldOut(p);
+  const priceInfo = getDisplayPriceInfo(p);
+  const salePill = priceInfo.onSale ? `<span class="pill" style="background:#fde2e2;color:#d92626">特價中</span>` : '';
+  const previewPill = p.previewOnly ? `<span class="pill" style="background:#fff0e6;color:#c96a2e" title="客人可以點進來看，但暫不開放下單">只曝光未開賣</span>` : '';
+
+  return `
+    <div class="pg-grid-item" data-id="${p.id}" draggable="true" title="${escapeHtml(p.name)}">
+      <div class="pg-grid-thumb">
+        ${img ? `<img src="${escapeHtml(img)}">` : ''}
+        <div class="pg-grid-num">${idx + 1}</div>
+        ${isSoldOut ? `<div class="pg-grid-soldout">已售完</div>` : ''}
+      </div>
+      <div class="pg-grid-name">${escapeHtml(p.name)}</div>
+      <div class="pg-grid-price">
+        ${priceInfo.onSale ? `<span style="text-decoration:line-through; color:var(--c-rose-text); font-size:11px; margin-right:4px">${formatPrice(priceInfo.original)}</span>` : ''}
+        ${priceInfo.isRange ? formatPrice(priceInfo.price) + ' 起' : formatPrice(priceInfo.price)}
+      </div>
+      <div class="pg-grid-pills">
+        ${catNames.map(n => `<span class="pill pill-instock">${escapeHtml(n)}</span>`).join('')}
+        ${stockPill}${deliveryPill}${archivedPill}${soldOutPill}${salePill}${previewPill}${orphanPill}
+      </div>
+      <div class="pg-grid-actions" onmousedown="event.stopPropagation()">
+        <button class="btn-icon" id="edit-${p.id}" title="編輯" style="font-size:11px; padding:5px 8px">編輯</button>
+        <button class="btn-icon" id="duplicate-${p.id}" title="複製商品（照片與推薦文字需重新填寫）" style="font-size:11px; padding:5px 8px">複製</button>
+        <button class="btn-icon ${p.archived ? 'active-accent' : ''}" id="archive-${p.id}" title="${p.archived ? '取消封存' : '封存'}" style="font-size:11px; padding:5px 8px">${p.archived ? '取消封存' : '封存'}</button>
+        <button class="btn-icon danger" id="delete-${p.id}" title="永久刪除" style="font-size:11px; padding:5px 8px">刪除</button>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleArchiveProduct(p) {
+  await db.collection(COL.PRODUCTS).doc(p.id).update({ archived: !p.archived });
+  showToast(p.archived ? '已取消封存' : '商品已封存，前台將不再顯示');
+  // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
+  await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+  if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
+  loadAndRenderProductsTable();
+}
+
+async function deleteProductPermanently(p) {
+  if (!confirm(`確定要永久刪除「${p.name}」嗎？此動作無法復原。`)) return;
+  await db.collection(COL.PRODUCTS).doc(p.id).delete();
+  showToast('商品已永久刪除');
+  // 前台只讀目錄快照，封存/刪除後一定要重建，否則下架的商品還會出現在前台
+  await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+  if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
+  loadAndRenderProductsTable();
+}
+
+// ---- 複製商品：來源分類/現貨預購/角色標籤/價格/款式庫存 等全部沿用，
+// 圖片與小編推薦清空需要重新填寫，名稱加上「（備份）」避免跟原商品搞混，
+// 新商品預設不上架精選、排序值重置到最後，需要你確認過內容再手動勾選精選 ----
+function duplicateProduct(p) {
+  const clone = {
+    ...p,
+    name: `${p.name}（備份）`,
+    images: [],
+    video: null,
+    recommendation: '',
+    featured: false,
+    sortOrder: 9999,
+    archived: false,
+    previewOnly: false
+  };
+  delete clone.id;
+  delete clone.createdAt;
+  delete clone.updatedAt;
+  openProductEditor(clone, { isDuplicate: true });
+}
+
+// ---- 商品格子拖拉排序，跟「首頁排序」頁面同一套手感（含手機觸控）----
+// 拖完之後要按「儲存排序」才會真的寫入資料庫。有選特定分類時存的是該分類專屬排序值，
+// 選「全部來源分類」時沿用首頁排序共用的 sortOrder（saveProductRowOrder 那邊決定要存哪個欄位）
+function initProductGridDragReorder() {
+  const grid = document.getElementById('productsGrid');
+  if (!grid) return;
+  let dragItem = null;
+  let dragOverItem = null;
+
+  const renumber = () => {
+    grid.querySelectorAll('.pg-grid-item').forEach((item, idx) => {
+      const num = item.querySelector('.pg-grid-num');
+      if (num) num.textContent = idx + 1;
+    });
+  };
+
+  grid.querySelectorAll('.pg-grid-item').forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      dragItem = item;
+      item.classList.add('sort-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    item.addEventListener('dragend', () => {
+      item.classList.remove('sort-dragging');
+      grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+      dragItem = null;
+      dragOverItem = null;
+      renumber();
+    });
+
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (item !== dragItem) {
+        grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+        item.classList.add('sort-over');
+        dragOverItem = item;
+      }
+    });
+
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragItem && dragOverItem && dragItem !== dragOverItem) {
+        const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+        const fromIdx = allItems.indexOf(dragItem);
+        const toIdx = allItems.indexOf(dragOverItem);
+        if (fromIdx < toIdx) dragOverItem.after(dragItem);
+        else dragOverItem.before(dragItem);
+      }
+    });
+
+    // 手機觸控：格子式排版同一列有好幾格，要同時比對 X / Y 座標才能正確判斷手指停在哪一格上
+    let touchItem = null;
+
+    item.addEventListener('touchstart', () => {
+      touchItem = item;
+      item.classList.add('sort-dragging');
+    }, { passive: true });
+
+    item.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touchX = e.touches[0].clientX;
+      const touchY = e.touches[0].clientY;
+      const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+      let target = null;
+      for (const i of allItems) {
+        if (i === touchItem) continue;
+        const rect = i.getBoundingClientRect();
+        if (touchX >= rect.left && touchX <= rect.right && touchY >= rect.top && touchY <= rect.bottom) {
+          target = i;
+          break;
+        }
+      }
+      if (target) {
+        grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+        target.classList.add('sort-over');
+        dragOverItem = target;
+      }
+    }, { passive: false });
+
+    item.addEventListener('touchend', () => {
+      if (touchItem && dragOverItem && touchItem !== dragOverItem) {
+        const allItems = Array.from(grid.querySelectorAll('.pg-grid-item'));
+        const fromIdx = allItems.indexOf(touchItem);
+        const toIdx = allItems.indexOf(dragOverItem);
+        if (fromIdx < toIdx) dragOverItem.after(touchItem);
+        else dragOverItem.before(touchItem);
+      }
+      touchItem?.classList.remove('sort-dragging');
+      grid.querySelectorAll('.pg-grid-item').forEach(i => i.classList.remove('sort-over'));
+      renumber();
+      touchItem = null;
+      dragOverItem = null;
+    });
+  });
+}
+
+async function saveProductRowOrder() {
+  const grid = document.getElementById('productsGrid');
+  if (!grid) return;
+  const orderedIds = Array.from(grid.querySelectorAll('.pg-grid-item')).map(r => r.dataset.id);
+  if (orderedIds.length === 0) return;
+
+  const btn = document.getElementById('saveProductOrderBtn');
+  btn.disabled = true;
+  btn.textContent = '儲存中...';
+  try {
+    const catId = productsPageState.filterCat !== 'all' ? productsPageState.filterCat : null;
+    const batch = db.batch();
+    orderedIds.forEach((id, idx) => {
+      const ref = db.collection(COL.PRODUCTS).doc(id);
+      if (catId) {
+        // 有選特定分類：只更新這個分類專屬的排序值，不影響商品在其他分類/首頁的順序
+        batch.update(ref, { [`sortOrderByCategory.${catId}`]: idx + 1 });
+      } else {
+        // 「全部來源分類」：沿用共用的 sortOrder（跟首頁排序頁共用）
+        batch.update(ref, { sortOrder: idx + 1 });
+      }
+    });
+    await batch.commit();
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+    // 訂單編輯的「+新增商品」會暫存一份商品清單，商品一有異動就要清掉，
+    // 否則剛剛新增的款式在加訂單時會選不到（清單還是舊的）
+    if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
+    showToast('排序已儲存');
+    await loadAndRenderProductsTable();
+  } catch (err) {
+    console.error(err);
+    showToast('排序儲存失敗，請稍後再試');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '儲存排序';
+  }
+}
+
+// ============================================
+// 新增／編輯商品 Modal
+// ============================================
+
+function openProductEditor(product, opts = {}) {
+  const isDuplicate = !!opts.isDuplicate;
+  // 複製商品時，不把來源商品當作編輯目標，儲存時會走「新增」流程產生新的一筆
+  productsPageState.editingProduct = isDuplicate ? null : product;
+  productsPageState.pendingImages = (product?.images || []).map(url => ({ url, dataUrl: url, uploaded: true }));
+  productsPageState.pendingVideo = product?.video ? { url: product.video, previewUrl: product.video, uploaded: true } : null;
+
+  const isEdit = !!product && !isDuplicate;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'productModalOverlay';
+
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:560px">
+      <div class="modal-header">
+        <span class="modal-title">${isDuplicate ? '複製商品（請確認內容後儲存）' : (isEdit ? '編輯商品' : '新增商品')}</span>
+        <button class="modal-close" id="closeProductModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="field-label">商品名稱 *</label>
+          <input type="text" id="pf_name" value="${product ? escapeHtml(product.name) : ''}" placeholder="例：菇菇寶貝毛絨玩偶">
+        </div>
+
+        <div class="field" style="background:var(--c-cream); border-radius:8px; padding:12px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-coffee); cursor:pointer">
+            <input type="checkbox" id="pf_featured" ${product?.featured ? 'checked' : ''} style="width:16px; height:16px">
+            精選顯示在首頁「所有商品」區塊
+          </label>
+        </div>
+
+        <div class="field" style="background:#fff8f5; border:0.5px solid var(--c-orange); border-radius:8px; padding:12px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-coffee); cursor:pointer">
+            <input type="checkbox" id="pf_previewOnly" ${product?.previewOnly ? 'checked' : ''} style="width:16px; height:16px">
+            只先曝光，暫不開放下單（特價還沒定案時用：客人可以點進來看，但價格顯示「等待官方公告」，按鈕鎖住不能加入購物車）
+          </label>
+        </div>
+
+        <div class="field">
+          <label class="field-label">商品圖片（最多6張，建議1080x1080正方形圖。非正方形圖片會自動跳出裁切視窗，可上傳檔案或直接 Ctrl+V 貼上截圖，會自動加上浮水印。拖曳縮圖可調整順序，第一張會是封面圖）</label>
+          <div class="img-upload-zone" id="pasteZone" tabindex="0">
+            ${icon('photo-plus', 26)}
+            點此區塊後按 Ctrl+V 貼上截圖，或點擊下方按鈕選擇檔案
+          </div>
+          <input type="file" id="pf_fileInput" accept="image/*" multiple style="display:none">
+          <button class="btn-secondary" id="pf_chooseFileBtn" style="margin-top:8px">選擇圖片檔案上傳</button>
+          <div class="img-thumb-grid" id="imgThumbGrid"></div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">商品短影片（選填，最多1支，建議20MB以內、直式或方形短影片，不會加浮水印）</label>
+          <div id="videoUploadWrap"></div>
+          <input type="file" id="pf_videoInput" accept="video/*" style="display:none">
+          <button class="btn-secondary" id="pf_chooseVideoBtn" style="margin-top:8px">選擇影片檔案上傳</button>
+        </div>
+
+        <div class="field">
+          <label class="field-label">來源分類（可複選）*</label>
+          <div class="tag-chip-list" id="pf_categoryChips">
+            ${(() => {
+              const isSelected = (c) => product?.categoryIds
+                ? product.categoryIds.includes(c.id)
+                : (product?.categoryId === c.id); // 相容舊格式單一categoryId
+              const chip = (c, isSub) =>
+                `<div class="tag-chip ${isSelected(c) ? 'selected' : ''}" data-cat="${c.id}" ${isSub ? 'style="border-style:dashed"' : ''}>${isSub ? '└ ' : ''}${escapeHtml(c.name)}</div>`;
+              // 主分類後面緊接著它的子分類，方便對照；只勾子分類也沒問題——
+              // 前台點主分類時會連子分類的商品一起列出來
+              const rows = [];
+              getMainCategories(appState.categories).forEach(m => {
+                rows.push(chip(m, false));
+                getSubCategories(appState.categories, m.id).forEach(sub => rows.push(chip(sub, true)));
+              });
+              // 上層被刪掉的孤兒分類也要列出來，否則商品會沒辦法取消或改掛
+              const shown = new Set(getMainCategories(appState.categories).flatMap(m => [m.id, ...getSubCategories(appState.categories, m.id).map(s => s.id)]));
+              appState.categories.filter(c => !shown.has(c.id)).forEach(c => rows.push(chip(c, false)));
+              return rows.join('');
+            })()}
+          </div>
+          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px">
+            虛線的是子分類。只勾子分類就好，客人點主分類時一樣看得到這個商品。
+          </p>
+        </div>
+
+        <div class="field">
+          <label class="field-label">現貨／預購 *（沒有另外針對款式設定的話，就是用這個）</label>
+          <div class="tag-chip-list">
+            <div class="tag-chip ${(!product || product.stockType === 'instock') ? 'selected' : ''}" data-stock="instock">現貨</div>
+            <div class="tag-chip ${product?.stockType === 'preorder' ? 'selected' : ''}" data-stock="preorder">預購</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">取貨方式 *（商品太大/太重需要宅配時選「宅配」，結帳流程會改成收地址+匯款）</label>
+          <div class="tag-chip-list">
+            <div class="tag-chip ${(!product || product.deliveryMethod !== 'homeDelivery') ? 'selected' : ''}" data-delivery="cvs">超商取貨付款</div>
+            <div class="tag-chip ${product?.deliveryMethod === 'homeDelivery' ? 'selected' : ''}" data-delivery="homeDelivery">宅配（需匯款）</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">角色標籤（可複選）</label>
+          <div class="tag-chip-list" id="pf_tagChips">
+            ${appState.tags.map(t => `<div class="tag-chip ${product?.tagIds?.includes(t.id) ? 'selected' : ''}" data-tag="${t.id}">${escapeHtml(t.name)}</div>`).join('')}
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">價格（NT$）*</label>
+          <input type="number" id="pf_price" value="${product?.price || ''}" placeholder="0">
+        </div>
+
+        <div class="field">
+          <label class="field-label">特價（NT$，選填。有填才會在前台顯示原價劃線＋特價，留空就是正常售價）</label>
+          <input type="number" id="pf_salePrice" value="${product?.salePrice ?? ''}" placeholder="留空表示沒有特價">
+        </div>
+
+        <div class="field" id="pf_simpleStockField">
+          <label class="field-label">數量／庫存（選填，留空表示不限制。賣完會自動顯示「已售完」）</label>
+          <input type="number" id="pf_stock" value="${product?.stock ?? ''}" placeholder="例：10">
+        </div>
+
+        <div class="field">
+          <label class="field-label">款式（可新增多個，庫存會改成各款式分開計算。價格欄位留空表示跟上面的「價格」一樣，填了數字才會覆蓋成該款式專屬的價格。現貨/預購同理，選「跟隨商品」就是用上面的設定，同一個商品可以有些款式現貨、有些款式預購）</label>
+          <div id="pf_stylesList"></div>
+          <button class="btn-secondary" id="pf_addStyleBtn" style="margin-top:4px">+ 新增款式</button>
+        </div>
+
+        <div class="field">
+          <label class="field-label">小編推薦</label>
+          <textarea id="pf_recommendation" placeholder="例：超療癒韓國限定款！數量非常有限～">${product?.recommendation ? escapeHtml(product.recommendation) : ''}</textarea>
+        </div>
+
+        <button class="btn-primary" id="pf_saveBtn" style="margin-top:6px">${isDuplicate ? '儲存複製的商品' : (isEdit ? '儲存變更' : '新增商品')}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // 款式列表渲染（每個款式可各自設定庫存跟價格；相容舊資料：舊版 styles 是純字串陣列，或沒有 price 欄位）
+  const stylesListEl = document.getElementById('pf_stylesList');
+  let styles = (product?.styles || []).map(s => {
+    if (typeof s === 'string') return { name: s, stock: '', price: '', salePrice: '', stockType: '' };
+    return { name: s.name || '', stock: s.stock ?? '', price: s.price ?? '', salePrice: s.salePrice ?? '', stockType: s.stockType || '' };
+  });
+
+  function toggleSimpleStockVisibility() {
+    document.getElementById('pf_simpleStockField').style.display = styles.length > 0 ? 'none' : 'block';
+  }
+
+  function renderStylesList() {
+    stylesListEl.innerHTML = styles.map((s, i) => `
+      <div class="style-input-row" style="flex-wrap:wrap">
+        <input type="text" value="${escapeHtml(s.name)}" placeholder="款式名稱" data-style-name-idx="${i}" style="flex:2">
+        <input type="number" value="${escapeHtml(String(s.stock))}" placeholder="庫存(留空不限)" data-style-stock-idx="${i}" style="flex:1; min-width:0">
+        <input type="number" value="${escapeHtml(String(s.price))}" placeholder="價格(留空同上)" data-style-price-idx="${i}" style="flex:1; min-width:0">
+        <input type="number" value="${escapeHtml(String(s.salePrice))}" placeholder="特價(選填)" data-style-saleprice-idx="${i}" style="flex:1; min-width:0">
+        <button class="btn-icon danger" data-remove-style="${i}">移除</button>
+        <div class="tag-chip-list" style="flex-basis:100%; margin-top:2px">
+          <div class="tag-chip ${!s.stockType ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="">跟隨商品</div>
+          <div class="tag-chip ${s.stockType === 'instock' ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="instock">現貨</div>
+          <div class="tag-chip ${s.stockType === 'preorder' ? 'selected' : ''}" data-style-stocktype-idx="${i}" data-style-stocktype-val="preorder">預購</div>
+        </div>
+      </div>
+    `).join('');
+    stylesListEl.querySelectorAll('[data-style-name-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.styleNameIdx)].name = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-stock-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.styleStockIdx)].stock = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-price-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.stylePriceIdx)].price = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-saleprice-idx]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        styles[parseInt(e.target.dataset.styleSalepriceIdx)].salePrice = e.target.value;
+      });
+    });
+    stylesListEl.querySelectorAll('[data-remove-style]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        styles.splice(parseInt(btn.dataset.removeStyle), 1);
+        renderStylesList();
+        toggleSimpleStockVisibility();
+      });
+    });
+    stylesListEl.querySelectorAll('[data-style-stocktype-idx]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const idx = parseInt(chip.dataset.styleStocktypeIdx);
+        styles[idx].stockType = chip.dataset.styleStocktypeVal;
+        renderStylesList();
+      });
+    });
+  }
+  renderStylesList();
+  toggleSimpleStockVisibility();
+
+  document.getElementById('pf_addStyleBtn').addEventListener('click', () => {
+    styles.push({ name: '', stock: '', price: '', salePrice: '', stockType: '' });
+    renderStylesList();
+    toggleSimpleStockVisibility();
+  });
+
+  // 標籤複選
+  document.getElementById('pf_tagChips').querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('selected'));
+  });
+
+  // 來源分類複選
+  document.getElementById('pf_categoryChips').querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('selected'));
+  });
+
+  // 現貨/預購單選
+  overlay.querySelectorAll('[data-stock]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('[data-stock]').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+
+  // 取貨方式單選
+  overlay.querySelectorAll('[data-delivery]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('[data-delivery]').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+
+  // 圖片上傳相關（監聽整個 Modal 範圍，不需要刻意點擊小方框才能貼上）
+  renderImgThumbGrid();
+  const pasteZone = document.getElementById('pasteZone');
+  setupPasteListener(overlay, handleNewImageFile);
+  pasteZone.addEventListener('click', () => pasteZone.focus());
+
+  document.getElementById('pf_chooseFileBtn').addEventListener('click', () => {
+    document.getElementById('pf_fileInput').click();
+  });
+  document.getElementById('pf_fileInput').addEventListener('change', (e) => {
+    Array.from(e.target.files).forEach(file => handleNewImageFile(file));
+    e.target.value = '';
+  });
+
+  // 短影片上傳
+  renderVideoUploadArea();
+  document.getElementById('pf_chooseVideoBtn').addEventListener('click', () => {
+    document.getElementById('pf_videoInput').click();
+  });
+  document.getElementById('pf_videoInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    productsPageState.pendingVideo = { file, previewUrl: URL.createObjectURL(file), uploaded: false };
+    renderVideoUploadArea();
+  });
+
+  document.getElementById('closeProductModal').addEventListener('click', closeProductEditor);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeProductEditor(); });
+  document.getElementById('pf_saveBtn').addEventListener('click', () => saveProduct(styles));
+}
+
+function closeProductEditor() {
+  document.getElementById('productModalOverlay')?.remove();
+  if (productsPageState.pendingVideo && !productsPageState.pendingVideo.uploaded) {
+    URL.revokeObjectURL(productsPageState.pendingVideo.previewUrl);
+  }
+  productsPageState.pendingImages = [];
+  productsPageState.pendingVideo = null;
+}
+
+async function handleNewImageFile(file) {
+  if (productsPageState.pendingImages.length >= 6) {
+    showToast('最多只能上傳6張圖片');
+    return;
+  }
+  try {
+    const needsCrop = await checkNeedsCrop(file);
+    if (needsCrop) {
+      openCropModal(file);
+    } else {
+      await processAndAddImage(file);
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('圖片處理失敗，請再試一次');
+  }
+}
+
+// 檢查圖片是否已經接近正方形（容許 3% 誤差），不是才需要裁切
+function checkNeedsCrop(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const ratio = img.width / img.height;
+      resolve(Math.abs(ratio - 1) > 0.03);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(false); };
+    img.src = url;
+  });
+}
+
+// 圖片裁切完成（或不需要裁切）後，統一走這裡：加浮水印 → 加進待上傳清單
+async function processAndAddImage(fileOrBlob) {
+  const settings = appState.settings;
+  const blob = await applyWatermark(fileOrBlob, settings.watermarkText || 'k.zone.buying');
+  const dataUrl = await blobToDataURL(blob);
+  productsPageState.pendingImages.push({ blob, dataUrl, uploaded: false });
+  renderImgThumbGrid();
+}
+
+let activeCropper = null;
+
+function openCropModal(file) {
+  const url = URL.createObjectURL(file);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'cropModalOverlay';
+  overlay.style.zIndex = '300';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">裁切圖片為正方形</span>
+        <button class="modal-close" id="closeCropModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--c-rose-text); margin-bottom:10px">這張圖片不是正方形，拖曳調整框選範圍，確認後會裁切成 1:1 比例</p>
+        <div id="cropContainer" style="height:300px; overflow:hidden; background:#000; border-radius:8px; touch-action:none;">
+          <img id="cropTargetImg" src="${url}" style="display:block; max-width:100%; max-height:300px;">
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px">
+          <button class="btn-secondary" id="cancelCropBtn">取消這張圖片</button>
+          <button class="btn-primary" id="confirmCropBtn">確認裁切</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // 手機修正1：阻止裁切容器內的所有觸控滾動事件傳遞到背景，避免頁面閃動
+  const cropContainer = document.getElementById('cropContainer');
+  cropContainer.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  cropContainer.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+
+  // 手機修正2：阻止 Modal 本身的滾動造成背景頁面跳動
+  overlay.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+  const imgEl = document.getElementById('cropTargetImg');
+  imgEl.onload = () => {
+    activeCropper = new Cropper(imgEl, {
+      aspectRatio: 1,
+      viewMode: 1,
+      autoCropArea: 0.9,
+      background: false,
+      movable: true,
+      zoomable: true,
+      rotatable: false,
+      scalable: false,
+      // 手機修正3：使用 CSS transform 而非 transition，減少重排
+      transition: false,
+      // 手機修正4：明確指定容器大小，避免 Cropper 自行計算時造成重排
+      minContainerWidth: cropContainer.offsetWidth,
+      minContainerHeight: 300,
+      ready() {
+        // 初始化完成後再顯示，避免初始計算時的閃動
+        cropContainer.style.opacity = '1';
+      }
+    });
+  };
+
+  // 初始化時先隱藏，等 Cropper ready 再顯示
+  cropContainer.style.opacity = '0';
+  cropContainer.style.transition = 'opacity 0.15s ease';
+
+  const cleanup = () => {
+    if (activeCropper) { activeCropper.destroy(); activeCropper = null; }
+    URL.revokeObjectURL(url);
+    overlay.remove();
+  };
+
+  document.getElementById('closeCropModal').addEventListener('click', cleanup);
+  document.getElementById('cancelCropBtn').addEventListener('click', cleanup);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(); });
+
+  document.getElementById('confirmCropBtn').addEventListener('click', () => {
+    if (!activeCropper) return;
+    const canvas = activeCropper.getCroppedCanvas({ width: 1080, height: 1080 });
+    canvas.toBlob(async (blob) => {
+      cleanup();
+      await processAndAddImage(blob);
+    }, 'image/jpeg', 0.92);
+  });
+}
+
+function renderImgThumbGrid() {
+  const grid = document.getElementById('imgThumbGrid');
+  if (!grid) return;
+  grid.innerHTML = productsPageState.pendingImages.map((img, i) => `
+    <div class="img-thumb" draggable="true" data-img-idx="${i}" style="position:relative; cursor:grab">
+      <img src="${img.dataUrl}" style="pointer-events:none">
+      ${i === 0 ? `<span style="position:absolute; bottom:2px; left:2px; background:var(--c-orange); color:#fff; font-size:9px; padding:1px 5px; border-radius:5px; font-weight:700">封面</span>` : ''}
+      <button class="img-thumb-remove" data-remove-img="${i}">×</button>
+    </div>
+  `).join('');
+  grid.querySelectorAll('[data-remove-img]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      productsPageState.pendingImages.splice(parseInt(btn.dataset.removeImg), 1);
+      renderImgThumbGrid();
+    });
+  });
+  initImgThumbDragReorder(grid);
+}
+
+// 拖曳圖片縮圖調整順序（第一張＝封面圖，前台商品卡與詳情頁主圖都用第一張）
+function initImgThumbDragReorder(grid) {
+  let dragIdx = null;
+  grid.querySelectorAll('[data-img-idx]').forEach(thumb => {
+    thumb.addEventListener('dragstart', (e) => {
+      dragIdx = parseInt(thumb.dataset.imgIdx);
+      e.dataTransfer.effectAllowed = 'move';
+      thumb.style.opacity = '0.4';
+    });
+    thumb.addEventListener('dragend', () => {
+      thumb.style.opacity = '1';
+    });
+    thumb.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    thumb.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const dropIdx = parseInt(thumb.dataset.imgIdx);
+      if (dragIdx === null || dragIdx === dropIdx) return;
+      const moved = productsPageState.pendingImages.splice(dragIdx, 1)[0];
+      productsPageState.pendingImages.splice(dropIdx, 0, moved);
+      dragIdx = null;
+      renderImgThumbGrid();
+    });
+  });
+}
+
+// ---- 商品短影片上傳區塊 ----
+function renderVideoUploadArea() {
+  const wrap = document.getElementById('videoUploadWrap');
+  if (!wrap) return;
+  const v = productsPageState.pendingVideo;
+  if (!v) {
+    wrap.innerHTML = `<div style="font-size:12px; color:var(--c-rose-text)">目前沒有上傳影片</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div style="position:relative; width:140px; margin-top:6px">
+      <video src="${escapeHtml(v.previewUrl)}" muted playsinline style="width:100%; border-radius:8px; background:#000; display:block"></video>
+      <button class="img-thumb-remove" id="removeVideoBtn" style="position:absolute; top:-6px; right:-6px">×</button>
+    </div>
+  `;
+  document.getElementById('removeVideoBtn').addEventListener('click', () => {
+    productsPageState.pendingVideo = null;
+    renderVideoUploadArea();
+  });
+}
+
+async function saveProduct(styles) {
+  const name = document.getElementById('pf_name').value.trim();
+  const categoryIds = Array.from(document.getElementById('pf_categoryChips').querySelectorAll('.selected')).map(el => el.dataset.cat);
+  const price = parseFloat(document.getElementById('pf_price').value);
+  const salePriceVal = document.getElementById('pf_salePrice').value;
+  const salePrice = salePriceVal === '' ? null : parseFloat(salePriceVal);
+  const stockVal = document.getElementById('pf_stock').value;
+  const stock = stockVal === '' ? null : parseInt(stockVal);
+  const recommendation = document.getElementById('pf_recommendation').value.trim();
+  const stockType = document.querySelector('[data-stock].selected')?.dataset.stock || 'instock';
+  const deliveryMethod = document.querySelector('[data-delivery].selected')?.dataset.delivery || 'cvs';
+  const tagIds = Array.from(document.getElementById('pf_tagChips').querySelectorAll('.selected')).map(el => el.dataset.tag);
+  const featured = document.getElementById('pf_featured').checked;
+  const previewOnly = document.getElementById('pf_previewOnly').checked;
+  // 排序值不再由這個表單填寫，改成在「商品管理」列表拖拉排序；
+  // 編輯既有商品時保留原本的排序值；新增/複製的商品要排在「該分類最前面」（新品優先曝光），
+  // 之後才由拖拉排序決定實際位置。實際計算（要抓現有商品的最小排序值）留到後面存檔時再做，
+  // 這裡先給預設值，避免下面還沒查完資料庫前的程式碼誤用到 undefined
+  const sortOrder = productsPageState.editingProduct
+    ? (productsPageState.editingProduct.sortOrder ?? 9999)
+    : 9999;
+  const cleanStyles = styles
+    .filter(s => s.name.trim())
+    .map(s => ({
+      name: s.name.trim(),
+      stock: s.stock === '' || s.stock === null || s.stock === undefined ? null : parseInt(s.stock),
+      // price 留空就是 null，代表這個款式跟商品共用同一個價格
+      price: s.price === '' || s.price === null || s.price === undefined ? null : parseFloat(s.price),
+      // salePrice 留空就是 null，代表這個款式沒有自己的特價，看是否要跟商品共用的特價
+      salePrice: s.salePrice === '' || s.salePrice === null || s.salePrice === undefined ? null : parseFloat(s.salePrice),
+      // stockType 留空就是跟隨商品共用的現貨/預購設定
+      stockType: s.stockType || null
+    }));
+
+  if (!name) { showToast('請輸入商品名稱'); return; }
+  if (categoryIds.length === 0) { showToast('請至少選擇一個來源分類'); return; }
+  if (isNaN(price) || price < 0) { showToast('請輸入正確的價格'); return; }
+  if (salePrice !== null && (isNaN(salePrice) || salePrice < 0)) { showToast('特價格式不正確，請確認'); return; }
+  if (cleanStyles.some(s => s.price !== null && (isNaN(s.price) || s.price < 0))) { showToast('款式的價格格式不正確，請確認'); return; }
+  if (cleanStyles.some(s => s.salePrice !== null && (isNaN(s.salePrice) || s.salePrice < 0))) { showToast('款式的特價格式不正確，請確認'); return; }
+  if (productsPageState.pendingImages.length === 0) { showToast('請至少上傳一張商品圖片'); return; }
+
+  const saveBtn = document.getElementById('pf_saveBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '儲存中...';
+
+  try {
+    // 上傳尚未上傳過的圖片（陣列順序就是前台顯示順序，第一張是封面）
+    const imageUrls = [];
+    for (const img of productsPageState.pendingImages) {
+      if (img.uploaded && img.url) {
+        imageUrls.push(img.url);
+      } else {
+        const url = await uploadImageToStorage(img.blob, 'products');
+        imageUrls.push(url);
+      }
+    }
+
+    // 上傳短影片（如果有新的、尚未上傳過的影片）
+    let videoUrl = null;
+    const pendingVideo = productsPageState.pendingVideo;
+    if (pendingVideo) {
+      videoUrl = (pendingVideo.uploaded && pendingVideo.url)
+        ? pendingVideo.url
+        : await uploadVideoToStorage(pendingVideo.file, 'products');
+    }
+
+    // 新增/複製商品時，要讓新商品排在「全部商品」跟「所屬每個分類」的最前面，
+    // 所以要先查一次目前現有商品最小的排序值，新商品的排序值設成比它更小（可以是負數，只是用來比大小，不影響顯示）
+    let newSortOrder = sortOrder;
+    let newSortOrderByCategory = productsPageState.editingProduct ? (productsPageState.editingProduct.sortOrderByCategory || {}) : {};
+    if (!productsPageState.editingProduct) {
+      const existingSnap = await db.collection(COL.PRODUCTS).where('archived', '==', false).get();
+      const existingProducts = existingSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      newSortOrder = existingProducts.length > 0
+        ? Math.min(...existingProducts.map(p => p.sortOrder ?? 9999)) - 1
+        : 1;
+
+      newSortOrderByCategory = {};
+      categoryIds.forEach(catId => {
+        const inCat = existingProducts.filter(p => getProductCategoryIds(p).includes(catId));
+        newSortOrderByCategory[catId] = inCat.length > 0
+          ? Math.min(...inCat.map(p => getCategorySortOrder(p, catId))) - 1
+          : 1;
+      });
+    }
+
+    const productData = {
+      name, categoryIds, price, salePrice, recommendation, stockType, deliveryMethod, tagIds,
+      featured, previewOnly, sortOrder: newSortOrder, sortOrderByCategory: newSortOrderByCategory,
+      stock: cleanStyles.length > 0 ? null : stock,
+      styles: cleanStyles,
+      images: imageUrls,
+      video: videoUrl,
+      // 編輯既有商品時要保留原本的封存狀態，不能每次存檔都強制變成「未封存」，
+      // 不然管理員只是想改個價格，結果封存的商品就被悄悄重新上架了
+      archived: productsPageState.editingProduct ? !!productsPageState.editingProduct.archived : false,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    if (productsPageState.editingProduct) {
+      await db.collection(COL.PRODUCTS).doc(productsPageState.editingProduct.id).update(productData);
+      showToast('商品已更新');
+    } else {
+      productData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection(COL.PRODUCTS).add(productData);
+      showToast('商品已新增');
+      // 新增/複製出來的商品一定是「未封存」，如果目前正在看「已封存商品」清單，
+      // 切回「上架中商品」清單，不然存完會覺得商品憑空消失
+      if (productsPageState.filterArchived) {
+        productsPageState.filterArchived = false;
+        const toggleBtn = document.getElementById('toggleArchivedBtn');
+        if (toggleBtn) toggleBtn.textContent = '查看已封存商品';
+      }
+    }
+
+    // 商品有異動：重建前台目錄快照，並清掉自己瀏覽器的快取
+    await rebuildCatalog().catch(err => console.error('重建商品目錄快照失敗:', err));
+    // 訂單編輯的「+新增商品」會暫存一份商品清單，商品一有異動就要清掉，
+    // 否則剛剛新增的款式在加訂單時會選不到（清單還是舊的）
+    if (typeof invalidateAdminProductsCache === 'function') invalidateAdminProductsCache();
+    closeProductEditor();
+    loadAndRenderProductsTable();
+
+  } catch (err) {
+    console.error(err);
+    showToast('儲存失敗，請檢查網路連線後再試');
+    saveBtn.disabled = false;
+    saveBtn.textContent = productsPageState.editingProduct ? '儲存變更' : '新增商品';
+  }
+}
