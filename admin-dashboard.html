@@ -12,7 +12,7 @@
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>管理後台｜K.Zone 日韓代購</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260922">
 <link rel="stylesheet" href="assets/admin-style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -73,22 +73,22 @@ if (sessionStorage.getItem('kzone_admin_auth') !== '1') {
   </div>
 </div>
 
-<script src="firebase-config.js"></script>
-<script src="assets/icons.js"></script>
-<script src="assets/illustrations.js"></script>
-<script src="assets/common.js"></script>
+<script src="firebase-config.js?v=20260922"></script>
+<script src="assets/icons.js?v=20260922"></script>
+<script src="assets/illustrations.js?v=20260922"></script>
+<script src="assets/common.js?v=20260922"></script>
 <script>document.addEventListener("DOMContentLoaded", () => renderStaticIcons());</script>
-<script src="assets/admin-products.js"></script>
-<script src="assets/admin-categories.js"></script>
-<script src="assets/admin-orders.js"></script>
-<script src="assets/admin-purchasing.js"></script>
-<script src="assets/admin-picking.js"></script>
-<script src="assets/admin-shipped.js"></script>
-<script src="assets/admin-coupons.js"></script>
-<script src="assets/admin-image-download.js"></script>
-<script src="assets/admin-sort.js"></script>
-<script src="assets/admin-stats.js"></script>
-<script src="assets/admin-settings.js"></script>
+<script src="assets/admin-products.js?v=20260922"></script>
+<script src="assets/admin-categories.js?v=20260922"></script>
+<script src="assets/admin-orders.js?v=20260922"></script>
+<script src="assets/admin-purchasing.js?v=20260922"></script>
+<script src="assets/admin-picking.js?v=20260922"></script>
+<script src="assets/admin-shipped.js?v=20260922"></script>
+<script src="assets/admin-coupons.js?v=20260922"></script>
+<script src="assets/admin-image-download.js?v=20260922"></script>
+<script src="assets/admin-sort.js?v=20260922"></script>
+<script src="assets/admin-stats.js?v=20260922"></script>
+<script src="assets/admin-settings.js?v=20260922"></script>
 <script>
 let appState = {
   products: [],
@@ -129,13 +129,44 @@ const PAGE_RENDERERS = {
   settings: renderSettingsPage
 };
 
+// 頁面畫不出來時，一定要在畫面上講清楚原因。
+// 之前發生過：上傳了新版網頁，但瀏覽器還在用舊的快取程式檔，結果新程式呼叫到舊檔案裡還沒有的函式，
+// 整頁就永遠停在「載入後台資料中...」，畫面完全沒有線索，只能猜。
+function showAdminError(err) {
+  console.error('後台載入失敗:', err);
+  const main = document.getElementById('adminMain');
+  if (!main) return;
+  main.innerHTML = `
+    <div class="admin-card" style="border:1px solid var(--c-orange); background:#fff8f5">
+      <div style="font-size:14px; font-weight:700; color:var(--c-coffee); margin-bottom:8px">後台載入失敗</div>
+      <p style="font-size:13px; color:var(--c-rose-text); line-height:1.9">
+        最常見的原因是<strong>瀏覽器還在用舊版的程式檔</strong>（剛上傳完新版時很容易發生）。<br>
+        請按 <strong>Ctrl + F5</strong>（Mac 是 Cmd + Shift + R）強制重新整理一次，通常就會恢復。<br>
+        如果重新整理後還是一樣，把下面這行訊息回報就能查出原因：
+      </p>
+      <div style="margin-top:10px; padding:10px 12px; background:#fff; border:0.5px solid var(--c-blush); border-radius:8px; font-size:12px; color:#a33; word-break:break-all">
+        ${escapeHtml ? escapeHtml(String(err && err.message || err)) : String(err)}
+      </div>
+    </div>
+  `;
+}
+
 function navigateTo(page) {
   document.querySelectorAll('.admin-nav-item[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
   document.getElementById('mobileNavSelect').value = page;
   const renderer = PAGE_RENDERERS[page];
-  if (renderer) renderer();
+  if (!renderer) {
+    showAdminError(new Error(`找不到「${page}」這一頁的程式（可能是某個 js 檔沒上傳或還是舊版）`));
+    return;
+  }
+  try {
+    const result = renderer();
+    if (result && typeof result.catch === 'function') result.catch(showAdminError);
+  } catch (err) {
+    showAdminError(err);
+  }
 }
 
 document.querySelectorAll('.admin-nav-item[data-page]').forEach(el => {
@@ -147,7 +178,7 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   location.href = 'admin.html';
 });
 
-bootAdmin();
+bootAdmin().catch(showAdminError);
 </script>
 
 </body>
