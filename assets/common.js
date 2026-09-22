@@ -831,3 +831,96 @@ function refreshCartBadge() {
     b.style.display = count > 0 ? 'flex' : 'none';
   });
 }
+
+// ============================================
+// 前台分類導覽列（首頁 / 商品列表頁共用）
+// ============================================
+// 結構：
+//   第一排 = 全部｜最新上架｜現貨｜各主分類
+//   第二排 = 子分類列（只有當「選到的主分類底下真的有子分類」時才出現，第一顆是已選中的「全部」）
+// 電腦版另外在有子分類的主分類上做滑鼠滑過展開的下拉選單（純 CSS，見 style.css 的 .sn-dropdown）；
+// 手機沒有滑過去這個動作，所以一律靠第二排的子分類列切換。
+//
+// 「現貨」不是真的分類，而是系統依商品目前的現貨/預購設定自動判斷的虛擬分類，
+// 你不用手動維護，改商品設定就會自動跟著變
+
+const VIRTUAL_CAT_FILTERS = ['all', 'new', 'instock'];
+
+function isVirtualCatFilter(catFilter) {
+  return VIRTUAL_CAT_FILTERS.includes(catFilter);
+}
+
+function renderCategoryNavInto(navEl, subBarEl, { categories, currentCatFilter, onSelect }) {
+  if (!navEl) return;
+  const mains = getMainCategories(categories);
+  // 選到子分類時，它所屬的主分類也要呈現選中狀態，客人才知道自己在哪一區
+  const current = (categories || []).find(c => c.id === currentCatFilter);
+  const activeMainId = current ? (current.parentId || current.id) : null;
+
+  const navBtn = (cat, label, active) =>
+    `<button class="sn-item ${active ? 'active' : ''}" data-cat="${escapeHtml(cat)}">${label}</button>`;
+
+  let html = '';
+  html += navBtn('all', '全部', currentCatFilter === 'all');
+  html += navBtn('new', '✨ 最新上架', currentCatFilter === 'new');
+  html += navBtn('instock', '現貨', currentCatFilter === 'instock');
+
+  mains.forEach(cat => {
+    const subs = getSubCategories(categories, cat.id);
+    const isActive = activeMainId === cat.id;
+    if (subs.length === 0) {
+      html += navBtn(cat.id, escapeHtml(cat.name), isActive);
+      return;
+    }
+    html += `
+      <span class="sn-group">
+        <button class="sn-item ${isActive ? 'active' : ''}" data-cat="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}<span class="sn-caret">▾</span></button>
+        <div class="sn-dropdown">
+          <button data-cat="${escapeHtml(cat.id)}" class="${currentCatFilter === cat.id ? 'active' : ''}">全部${escapeHtml(cat.name)}</button>
+          ${subs.map(s => `<button data-cat="${escapeHtml(s.id)}" class="${currentCatFilter === s.id ? 'active' : ''}">${escapeHtml(s.name)}</button>`).join('')}
+        </div>
+      </span>`;
+  });
+
+  navEl.innerHTML = html;
+  navEl.querySelectorAll('[data-cat]').forEach(btn => {
+    btn.addEventListener('click', () => onSelect(btn.dataset.cat));
+  });
+
+  renderSubCategoryBar(subBarEl, { categories, currentCatFilter, onSelect });
+}
+
+function renderSubCategoryBar(subBarEl, { categories, currentCatFilter, onSelect }) {
+  if (!subBarEl) return;
+  const parentId = getSubCategoryBarParentId(categories, currentCatFilter);
+  const subs = parentId ? getSubCategories(categories, parentId) : [];
+
+  // 沒有子分類就整排收起來，不要留一條空白的橫條
+  if (subs.length === 0) {
+    subBarEl.style.display = 'none';
+    subBarEl.innerHTML = '';
+    return;
+  }
+
+  const parent = categories.find(c => c.id === parentId);
+  subBarEl.style.display = '';
+  subBarEl.innerHTML = `
+    <div class="container">
+      <button class="subcat-chip ${currentCatFilter === parentId ? 'active' : ''}" data-cat="${escapeHtml(parentId)}">
+        全部${parent ? escapeHtml(parent.name) : ''}
+      </button>
+      ${subs.map(s => `<button class="subcat-chip ${currentCatFilter === s.id ? 'active' : ''}" data-cat="${escapeHtml(s.id)}">${escapeHtml(s.name)}</button>`).join('')}
+    </div>
+  `;
+  subBarEl.querySelectorAll('[data-cat]').forEach(btn => {
+    btn.addEventListener('click', () => onSelect(btn.dataset.cat));
+  });
+}
+
+// 依目前選到的分類篩選商品。'all' 不篩、'new' 交給呼叫端處理、'instock' 用商品目前的庫存狀態判斷、
+// 其他就是真的分類（點主分類會連子分類的商品一起帶出來）
+function filterProductsByCatFilter(products, catFilter, categories) {
+  if (catFilter === 'all' || catFilter === 'new') return products;
+  if (catFilter === 'instock') return products.filter(p => productHasStockType(p, 'instock'));
+  return products.filter(p => productInCategory(p, catFilter, categories));
+}

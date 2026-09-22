@@ -42,13 +42,22 @@ async function renderProductsPage() {
     </div>
   `;
 
+  // 下拉選單依「主分類 → 子分類」的層級排列，子分類前面加個符號才看得出從屬關係
   const catSelect = document.getElementById('catFilterSelect');
-  appState.categories.forEach(cat => {
+  const addCatOption = (cat, isSub) => {
     const opt = document.createElement('option');
     opt.value = cat.id;
-    opt.textContent = cat.name;
+    opt.textContent = isSub ? `　└ ${cat.name}` : cat.name;
     catSelect.appendChild(opt);
+  };
+  getMainCategories(appState.categories).forEach(m => {
+    addCatOption(m, false);
+    getSubCategories(appState.categories, m.id).forEach(sub => addCatOption(sub, true));
   });
+  // 上層已被刪除的分類也要能選到，才找得到掛在上面的商品
+  const shownCatIds = new Set(getMainCategories(appState.categories)
+    .flatMap(m => [m.id, ...getSubCategories(appState.categories, m.id).map(s => s.id)]));
+  appState.categories.filter(c => !shownCatIds.has(c.id)).forEach(c => addCatOption(c, false));
   catSelect.addEventListener('change', () => {
     productsPageState.filterCat = catSelect.value;
     loadAndRenderProductsTable();
@@ -101,12 +110,8 @@ async function loadAndRenderProductsTable() {
       // 這裡專門挑出「掛的分類 ID，沒有一個對得上現在還存在的分類」的商品
       products = products.filter(p => hasOrphanedCategory(p, appState.categories));
     } else if (productsPageState.filterCat !== 'all') {
-      products = products.filter(p => {
-        if (p.categoryIds && Array.isArray(p.categoryIds)) {
-          return p.categoryIds.includes(productsPageState.filterCat);
-        }
-        return p.categoryId === productsPageState.filterCat; // 相容舊格式
-      });
+      // 跟前台一致：選主分類時，掛在它底下子分類的商品也會一起列出來
+      products = products.filter(p => productInCategory(p, productsPageState.filterCat, appState.categories));
     }
     if (productsPageState.filterSoldOut) {
       products = products.filter(p => isProductSoldOut(p));
@@ -449,13 +454,28 @@ function openProductEditor(product, opts = {}) {
         <div class="field">
           <label class="field-label">來源分類（可複選）*</label>
           <div class="tag-chip-list" id="pf_categoryChips">
-            ${appState.categories.map(c => {
-              const isSelected = product?.categoryIds
+            ${(() => {
+              const isSelected = (c) => product?.categoryIds
                 ? product.categoryIds.includes(c.id)
                 : (product?.categoryId === c.id); // 相容舊格式單一categoryId
-              return `<div class="tag-chip ${isSelected ? 'selected' : ''}" data-cat="${c.id}">${escapeHtml(c.name)}</div>`;
-            }).join('')}
+              const chip = (c, isSub) =>
+                `<div class="tag-chip ${isSelected(c) ? 'selected' : ''}" data-cat="${c.id}" ${isSub ? 'style="border-style:dashed"' : ''}>${isSub ? '└ ' : ''}${escapeHtml(c.name)}</div>`;
+              // 主分類後面緊接著它的子分類，方便對照；只勾子分類也沒問題——
+              // 前台點主分類時會連子分類的商品一起列出來
+              const rows = [];
+              getMainCategories(appState.categories).forEach(m => {
+                rows.push(chip(m, false));
+                getSubCategories(appState.categories, m.id).forEach(sub => rows.push(chip(sub, true)));
+              });
+              // 上層被刪掉的孤兒分類也要列出來，否則商品會沒辦法取消或改掛
+              const shown = new Set(getMainCategories(appState.categories).flatMap(m => [m.id, ...getSubCategories(appState.categories, m.id).map(s => s.id)]));
+              appState.categories.filter(c => !shown.has(c.id)).forEach(c => rows.push(chip(c, false)));
+              return rows.join('');
+            })()}
           </div>
+          <p style="font-size:11px; color:var(--c-rose-text); margin-top:6px">
+            虛線的是子分類。只勾子分類就好，客人點主分類時一樣看得到這個商品。
+          </p>
         </div>
 
         <div class="field">
