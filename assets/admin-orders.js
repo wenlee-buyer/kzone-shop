@@ -25,7 +25,8 @@ async function renderOrdersPage() {
         訂單金額已扣除優惠折抵與已收訂金，也就是超商實際要向客人收的貨款。<br>
         現貨訂單依日期區間匯出；<strong>預購訂單改成到右邊「含預購訂單」清單裡勾選要匯出哪幾張</strong>（到貨與否跟下單日期無關，用勾的比較準，已在「備貨頁」核對完的訂單會幫你預先勾好）。<br>
         <strong>已出貨的訂單不會被匯出</strong>（避免重複建單），所以日期區間重疊到也不會重複匯到同一張單。<br>
-        下載後請另存或貼入賣貨便原始 .xlsm 範本中執行「驗證」。
+        下載到的就是賣貨便官方的 .xlsm 範本檔（含「驗證」按鈕），<strong>可以直接上傳</strong>，不用再自己貼到範本裡。<br>
+        建議上傳前先在 Excel 按一次「驗證」再送出。
       </p>
       <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; font-size:13px; color:var(--c-coffee)">
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
@@ -1790,6 +1791,174 @@ async function doMergeOrders() {
 //   優惠折抵 / 額外折抵 → 客人結帳時看到的就是折扣後的金額，
 //     如果照商品小計去收，超商會多收客人錢（原本的寫法就是直接用 subtotal，會多收）
 //   已收訂金 → 預購訂單客人通常先付過訂金了，取貨時只需要補尾款
+// ============================================
+// 賣貨便「訂單匯入」檔案的產生
+// ============================================
+// 重點：賣貨便收的是他們自己那份 .xlsm 範本（裡面有「驗證」按鈕的巨集），
+// 自己用程式另外產生一個 .xlsx 是不能上傳的——這就是之前下載下來無法直接上傳的原因。
+//
+// 所以做法改成「把資料填進官方範本」：
+//   讀取 assets/賣貨便_訂單匯入.xlsm → 當成壓縮檔打開 → 只改工作表「訂單匯入」的資料列 →
+//   其他東西（巨集、驗證按鈕、溫層下拉選單、格式、填寫說明）全部原封不動 → 重新打包下載。
+// 這樣下載到的檔案跟官方範本是同一份，只是多了資料，可以直接上傳。
+//
+// 版面規格（直接取自範本與巨集原始碼）：
+//   第 6 列是標題列、第 7 列起是資料、A~J 共 10 欄、第 K 欄是巨集回寫的驗證結果，不能動
+const SHOPEE_TEMPLATE_URL = 'assets/shopee-import-template.xlsm'; // 檔名用英數，避免中文檔名在網址上出問題
+const SHOPEE_SHEET_PATH = 'xl/worksheets/sheet1.xml'; // 工作表「訂單匯入」
+const SHOPEE_FIRST_DATA_ROW = 7;
+const SHOPEE_MAX_ROWS = 500;      // 巨集：超過 500 筆會擋下來
+const SHOPEE_DATA_STYLE = 18;     // 範本資料欄位的樣式（儲存格格式為「文字」）
+
+// 欄位名稱，跟範本標題列一致，錯誤訊息要用
+const SHOPEE_FIELDS = ['取件人姓名', '取件人手機', '取件門市', '溫層', '商品', '訂單金額', '運費金額', '買家下訂日期', '商品備註', '其他資訊'];
+
+// 一張訂單 → 範本的一列（10 欄，全部都是文字；範本的欄位格式本來就是「文字」）
+function buildShopeeRow(order) {
+  const date = order.createdAt?.toDate ? order.createdAt.toDate() : new Date();
+  const dateStr = `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  const shipping = order.shippingFee ?? calcShippingFee(order.subtotal ?? order.total ?? 0);
+  return [
+    order.cvsName || '',
+    order.cvsPhone || '',
+    order.cvsStore || '',
+    '常溫',
+    '楓之谷周邊',
+    String(calcCodAmount(order)),
+    String(shipping),
+    dateStr,
+    order.cvsStoreName || '',
+    `LINE：${order.lineName || ''}`
+  ].map(v => String(v ?? ''));
+}
+
+// ---- 以下驗證規則逐條對應賣貨便範本裡那支驗證巨集，數字與訊息都照搬 ----
+// 目的是「上傳前就知道哪一筆會被退」，而不是上傳被打回來再一筆筆找
+
+// 巨集用 LenB(StrConv(s, vbFromUnicode)) 算長度：中文字算 2、英數算 1
+function shopeeByteLen(str) {
+  let n = 0;
+  for (const ch of String(str)) n += ch.charCodeAt(0) > 255 ? 2 : 1;
+  return n;
+}
+
+// 姓名禁用字元（含全形數字），跟巨集的正規表示式一致
+const SHOPEE_NAME_BANNED = /[\d０-９`~!@#$%&*()/\\|,.<>?();:_+\-=\[\]{}"'^]/;
+
+function validateShopeeRow(row) {
+  const errs = [];
+  const [name, phone, store, temp, product, amount, shipping, orderDate, note, other] = row.map(v => String(v).trim());
+
+  if (!name) errs.push('取件人姓名未填');
+  else if (name.length < 2) errs.push('取件人姓名不可少於2個字');
+  else if (shopeeByteLen(name) > 10) errs.push('取件人姓名不可超過10個字(5個中文字)');
+  else if (SHOPEE_NAME_BANNED.test(name)) errs.push('取件人姓名含禁用字元（數字或特殊符號）');
+
+  if (!phone) errs.push('取件人手機未填');
+  else if (!/^09\d{8}$/.test(phone)) errs.push('取件人手機須為09開頭的10碼數字');
+
+  if (!store) errs.push('取件門市店號未填');
+  else if (!/^\d{6}$/.test(store)) errs.push('取件門市店號須為6碼數字');
+
+  if (temp !== '常溫' && temp !== '冷凍') errs.push('溫層限定常溫/冷凍');
+
+  if (!product) errs.push('商品未填');
+  else if (product.length > 200) errs.push('商品長度不可超過200字');
+
+  const amountNum = Number(amount);
+  if (!amount) errs.push('訂單金額未填');
+  else if (!isFinite(amountNum)) errs.push('訂單金額必須為數字');
+  else if (amountNum < 0 || amountNum > 20000) errs.push('訂單金額須為0~20000');
+
+  const shipNum = Number(shipping);
+  if (!shipping) errs.push('運費金額未填');
+  else if (!isFinite(shipNum)) errs.push('運費金額必須為數字');
+  else if (shipNum < 0 || shipNum > 130) errs.push('運費金額須為0~130');
+
+  // 巨集另外會檢查代收總額：常溫 55 起、冷凍 130 起
+  if (isFinite(amountNum) && isFinite(shipNum)) {
+    const least = temp === '冷凍' ? 130 : 55;
+    const sum = amountNum + shipNum;
+    if (sum < least || sum > 20000) errs.push(`訂單金額+運費金額（${sum}）須為${least}~20000`);
+  }
+
+  if (orderDate && orderDate.length > 10) errs.push('買家下訂日期長度不可超過10個字');
+  if (note && note.length > 200) errs.push('商品備註長度不可超過200字');
+  if (other && other.length > 200) errs.push('其他資訊長度不可超過200字');
+
+  return errs;
+}
+
+function validateShopeeRows(rows, orders) {
+  const problems = [];
+  rows.forEach((row, i) => {
+    const errs = validateShopeeRow(row);
+    if (errs.length === 0) return;
+    const o = orders[i] || {};
+    const who = o.cvsName || o.lineName || '（未填姓名）';
+    problems.push(`${o.orderNo || '未編號'}　${who}：${errs.join('、')}`);
+  });
+  return problems;
+}
+
+// ---- 把資料列寫進範本的工作表 XML ----
+function shopeeEscapeXml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+    // Excel 不接受這些控制字元，先清掉避免整個檔案打不開
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+}
+
+function shopeeColLetter(index) { // 1 → A
+  let s = '';
+  let n = index;
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+// 全部用「行內文字」寫入（t="inlineStr"）：這樣就不用動到共用字串表 sharedStrings.xml，
+// 範本其他部分可以完全保持原樣，也符合範本要求的「欄位格式為文字」
+function buildShopeeSheetXml(templateXml, rows) {
+  const cells = (row, rowIndex) => row.map((val, i) => {
+    const ref = shopeeColLetter(i + 1) + rowIndex;
+    if (val === '') return `<c r="${ref}" s="${SHOPEE_DATA_STYLE}"/>`;
+    return `<c r="${ref}" s="${SHOPEE_DATA_STYLE}" t="inlineStr"><is><t xml:space="preserve">${shopeeEscapeXml(val)}</t></is></c>`;
+  }).join('');
+
+  const xmlRows = rows.map((row, idx) => {
+    const rowIndex = SHOPEE_FIRST_DATA_ROW + idx;
+    return `<row r="${rowIndex}" spans="1:11">${cells(row, rowIndex)}</row>`;
+  }).join('');
+
+  const lastRow = SHOPEE_FIRST_DATA_ROW + rows.length - 1;
+  return templateXml
+    // 資料接在原本的標題列後面（範本的 sheetData 只到第 6 列）
+    .replace('</sheetData>', xmlRows + '</sheetData>')
+    // 範圍要跟著放大，否則 Excel 可能不認得新資料
+    .replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:K${Math.max(lastRow, 6)}"/>`);
+}
+
+// 讀官方範本 → 只換掉工作表 XML → 重新打包成 .xlsm
+async function buildShopeeXlsm(rows) {
+  const res = await fetch(SHOPEE_TEMPLATE_URL);
+  if (!res.ok) throw new Error(`讀不到賣貨便範本檔（${res.status}），請確認 ${SHOPEE_TEMPLATE_URL} 有上傳`);
+  const zip = await JSZip.loadAsync(await res.arrayBuffer());
+
+  const sheetFile = zip.file(SHOPEE_SHEET_PATH);
+  if (!sheetFile) throw new Error('範本檔的內容不如預期（找不到訂單匯入工作表），請確認範本沒有被改過');
+
+  const sheetXml = await sheetFile.async('string');
+  zip.file(SHOPEE_SHEET_PATH, buildShopeeSheetXml(sheetXml, rows));
+
+  // 巨集檔（vbaProject.bin）跟驗證按鈕都沒有被動到，會原封不動包回去
+  return zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+    compression: 'DEFLATE'
+  });
+}
+
 function calcCodAmount(order) {
   const subtotal = order.subtotal ?? order.total ?? 0;
   const discount = order.discountAmount || 0;
@@ -1889,38 +2058,46 @@ async function exportOrdersToExcel() {
       return;
     }
 
-    const header = ['＊取件人姓名', '＊取件人手機', '＊取件門市', '* 溫層', '＊商品', '＊訂單金額', '＊運費金額', '買家下訂日期', '商品備註', '其他資訊  (FB/LINE/IG帳號)'];
+    if (orders.length > SHOPEE_MAX_ROWS) {
+      showToast(`賣貨便一次最多匯入 ${SHOPEE_MAX_ROWS} 筆，目前有 ${orders.length} 筆，請分批匯出`);
+      return;
+    }
 
-    const rows = orders.map(o => {
-      const date = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
-      const dateStr = `${date.getFullYear()}/${date.getMonth()+1}/${date.getDate()}`;
-      return [
-        o.cvsName || '',
-        o.cvsPhone || '',
-        o.cvsStore || '',
-        '常溫',
-        '楓之谷周邊',
-        calcCodAmount(o),
-        o.shippingFee ?? calcShippingFee(o.subtotal ?? o.total ?? 0),
-        dateStr,
-        o.cvsStoreName || '',
-        `LINE：${o.lineName || ''}`
-      ];
-    });
+    const rows = orders.map(buildShopeeRow);
 
-    const wsData = [header, ...rows];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [{wch:12},{wch:14},{wch:12},{wch:8},{wch:14},{wch:10},{wch:10},{wch:12},{wch:30},{wch:18}];
+    // 下載前先用「跟賣貨便驗證巨集完全相同的規則」自己檢查一次。
+    // 這樣有問題的資料在這裡就看得到是哪一張單、哪個欄位，不用等上傳被打回來才一筆筆找
+    const problems = validateShopeeRows(rows, orders);
+    if (problems.length > 0) {
+      const preview = problems.slice(0, 8).map(p => `・${p}`).join('\n');
+      const more = problems.length > 8 ? `\n（還有 ${problems.length - 8} 筆未列出）` : '';
+      const go = confirm(
+        `有 ${problems.length} 筆資料不符合賣貨便的規定，上傳後會被退回：\n\n${preview}${more}\n\n` +
+        `仍要下載嗎？\n（下載後可以直接在 Excel 裡改，改完按「驗證」確認）`
+      );
+      if (!go) return;
+    }
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '訂單匯入');
+    btn.textContent = '產生檔案中...';
+    const blob = await buildShopeeXlsm(rows);
 
     // 只勾預購、沒填日期時，檔名改用「今天」標記，不要讓檔名出現底線接空字串
     const today = new Date();
     const todayStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
     const fileLabel = (startDateStr && endDateStr) ? `${startDateStr}_${endDateStr}` : todayStr;
-    XLSX.writeFile(wb, `K.Zone訂單匯入_${fileLabel}.xlsx`);
-    showToast(`已匯出 ${orders.length} 筆訂單`);
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `賣貨便_訂單匯入_${fileLabel}.xlsm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    showToast(problems.length > 0
+      ? `已匯出 ${orders.length} 筆（其中 ${problems.length} 筆需要修正）`
+      : `已匯出 ${orders.length} 筆訂單，可直接上傳賣貨便`);
 
   } catch (err) {
     console.error(err);
