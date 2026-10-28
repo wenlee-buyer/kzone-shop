@@ -12,7 +12,7 @@
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>購物車｜K.Zone 日韓代購</title>
-<link rel="stylesheet" href="style.css?v=20260922">
+<link rel="stylesheet" href="style.css?v=20261028">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
@@ -61,10 +61,10 @@
 </div>
 
 
-<script src="firebase-config.js?v=20260922"></script>
-<script src="assets/icons.js?v=20260922"></script>
-<script src="assets/illustrations.js?v=20260922"></script>
-<script src="assets/common.js?v=20260922"></script>
+<script src="firebase-config.js?v=20261028"></script>
+<script src="assets/icons.js?v=20261028"></script>
+<script src="assets/illustrations.js?v=20261028"></script>
+<script src="assets/common.js?v=20261028"></script>
 <script>document.addEventListener("DOMContentLoaded", () => renderStaticIcons());</script>
 <script>
 let settings = {};
@@ -306,7 +306,14 @@ function openCvsForm() {
           <input type="text" id="cvs_storeName" placeholder="例：7-ELEVEN 楓谷門市">
         </div>
         <div class="field">
-          <label class="field-label">門市店號（6碼數字，選填）</label>
+          <label class="field-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap">
+            <span>門市店號（6碼數字）</span>
+            <!-- 開新視窗，客人查完店號回來時，已經填好的表單內容都還在，不用重填 -->
+            <a href="https://www.uniopen.com/map/search" target="_blank" rel="noopener noreferrer"
+               style="font-size:12px; font-weight:700; color:var(--c-orange); text-decoration:underline; display:inline-flex; align-items:center; gap:3px">
+              ${icon('search', 13)} 7-11店號搜尋
+            </a>
+          </label>
           <input type="text" id="cvs_store" placeholder="例：123456（若不知道可由小編協助查詢）">
         </div>
         `}
