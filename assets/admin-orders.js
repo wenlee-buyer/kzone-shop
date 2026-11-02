@@ -1325,7 +1325,20 @@ function pickProductForOrderItem(product, pickerOverlay) {
 }
 
 function addItemToEditOrder(product, style) {
-  const existing = editOrderState.items.find(i => i.productId === product.id && (i.style || '') === (style || ''));
+  // 用「商品目前的價格」加進訂單（有特價就用特價）
+  const price = getEffectivePrice(product, style).price;
+
+  // ⚠ 要連「單價」一起比對，不能只看商品和款式。
+  // 實際情境：客人之前趁特價買過某商品，特價結束後又想加買一件。這時候如果直接把數量加到舊的那一行，
+  // 新加的那件會跟著用到已經結束的特價，等於少收錢。
+  // 所以單價不一樣時要獨立成新的一行：舊的那件維持當初的優惠價，新加的用現在的價格。
+  // （併單的 mergeOrderItems 本來就是這樣處理的，這裡跟它保持一致）
+  const existing = editOrderState.items.find(i =>
+    i.productId === product.id &&
+    (i.style || '') === (style || '') &&
+    Number(i.price) === Number(price)
+  );
+
   if (existing) {
     existing.qty += 1;
   } else {
@@ -1334,11 +1347,19 @@ function addItemToEditOrder(product, style) {
       name: product.name,
       style: style || '',
       qty: 1,
-      price: getEffectivePrice(product, style).price, // 商品目前有特價的話，手動加入訂單也預設用特價
+      price,
       image: (product.images && product.images[0]) || '',
       stockType: getStyleStockType(product, style),
       deliveryMethod: product.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs'
     });
+
+    // 同一個商品款式已經在訂單裡、但價格不同時，提醒一下為什麼會多出一行，避免你以為系統重複加了
+    const sameProductDifferentPrice = editOrderState.items.some(i =>
+      i.productId === product.id && (i.style || '') === (style || '') && Number(i.price) !== Number(price)
+    );
+    if (sameProductDifferentPrice) {
+      showToast(`「${product.name}」原本的單價不同，已另外新增一行（目前單價 ${formatPrice(price)}）`);
+    }
   }
   renderEditOrderItems();
   updateEditOrderSummary();
