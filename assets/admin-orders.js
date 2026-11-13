@@ -1294,37 +1294,167 @@ async function openAddOrderItemPicker() {
 }
 
 // 選定商品後，如果有款式要再選款式，沒有款式就直接加進訂單
+// 選款式：可以複選，選完按一次「加入訂單」一起加進去。
+// 一個商品常常有十幾個款式，客人也常常一次買好幾款，一款一款點進點出太慢了。
+// 每個款式還可以直接設數量（同一款買兩個的情況很常見），省得加完還要回清單一個個按 +
 function pickProductForOrderItem(product, pickerOverlay) {
   const styles = normalizeStyles(product.styles);
   if (styles.length === 0) {
-    addItemToEditOrder(product, '');
+    const r = addItemToEditOrder(product, '');
     pickerOverlay.remove();
+    if (r.splitFromOldPrice) {
+      showToast(`「${product.name}」原本的單價不同，已另外新增一行（目前單價 ${formatPrice(r.price)}）`);
+    }
     return;
   }
 
+  // 已選的款式與數量：{ 款式名稱: 數量 }
+  const picked = {};
+
+  const styleRow = (s) => {
+    const soldOut = isStyleSoldOut(product, s.name);
+    const inOrder = editOrderState.items
+      .filter(i => i.productId === product.id && (i.style || '') === s.name)
+      .reduce((sum, i) => sum + i.qty, 0);
+    const price = getEffectivePrice(product, s.name).price;
+    return `
+      <div data-style-row="${escapeHtml(s.name)}"
+        style="display:flex; align-items:center; gap:8px; padding:8px 4px; border-bottom:0.5px solid var(--c-blush)">
+        <label style="flex:1; min-width:0; display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:var(--c-coffee)">
+          <input type="checkbox" data-style-check="${escapeHtml(s.name)}" style="width:16px; height:16px; flex-shrink:0">
+          <span style="flex:1; min-width:0">
+            ${escapeHtml(s.name)}
+            <span style="color:var(--c-rose-text); font-size:11px">・${formatPrice(price)}</span>
+            ${soldOut ? `<span class="pill" style="background:#fbe1e1; color:#a33; margin-left:4px">已售完</span>` : ''}
+            ${inOrder > 0 ? `<span class="pill" style="background:var(--c-cream); color:var(--c-rose-text); margin-left:4px">訂單已有 ${inOrder}</span>` : ''}
+          </span>
+        </label>
+        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0; opacity:0.35" data-style-qty-wrap="${escapeHtml(s.name)}">
+          <button class="ci-qbtn" type="button" data-style-minus="${escapeHtml(s.name)}">−</button>
+          <span style="font-size:12px; font-weight:700; min-width:16px; text-align:center" data-style-qty="${escapeHtml(s.name)}">1</span>
+          <button class="ci-qbtn" type="button" data-style-plus="${escapeHtml(s.name)}">+</button>
+        </div>
+      </div>
+    `;
+  };
+
   pickerOverlay.innerHTML = `
-    <div class="modal-box" style="max-width:360px">
+    <div class="modal-box" style="max-width:420px">
       <div class="modal-header">
-        <span class="modal-title">選擇款式</span>
+        <span class="modal-title">選擇款式（可複選）</span>
         <button class="modal-close" id="closeStylePickModal">×</button>
       </div>
       <div class="modal-body">
-        <div class="tag-chip-list">
-          ${styles.map(s => `<div class="tag-chip" data-pick-style="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>`).join('')}
+        <div style="font-size:12px; color:var(--c-rose-text); margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:8px">
+          <span>${escapeHtml(product.name)}</span>
+          <button class="btn-icon" id="styleSelectAllBtn" type="button" style="font-size:11px; padding:4px 8px">全選</button>
         </div>
+        <div id="stylePickList" style="max-height:46vh; overflow-y:auto">
+          ${styles.map(styleRow).join('')}
+        </div>
+        <button class="btn-primary" id="confirmStylePickBtn" style="margin-top:12px" disabled>請先選擇款式</button>
       </div>
     </div>
   `;
-  pickerOverlay.querySelectorAll('[data-pick-style]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      addItemToEditOrder(product, chip.dataset.pickStyle);
-      pickerOverlay.remove();
+
+  const confirmBtn = document.getElementById('confirmStylePickBtn');
+
+  function refreshConfirmBtn() {
+    const names = Object.keys(picked);
+    const totalQty = names.reduce((sum, n) => sum + picked[n], 0);
+    confirmBtn.disabled = names.length === 0;
+    confirmBtn.textContent = names.length === 0
+      ? '請先選擇款式'
+      : `加入訂單（${names.length} 款・共 ${totalQty} 件）`;
+    // 沒勾的款式，數量按鈕淡化，一眼看得出哪些是選中的
+    styles.forEach(s => {
+      const wrap = pickerOverlay.querySelector(`[data-style-qty-wrap="${CSS.escape(s.name)}"]`);
+      if (wrap) wrap.style.opacity = picked[s.name] ? '1' : '0.35';
+    });
+    const allBtn = document.getElementById('styleSelectAllBtn');
+    if (allBtn) allBtn.textContent = (names.length === styles.length) ? '全部取消' : '全選';
+  }
+
+  function setQty(name, qty) {
+    if (qty < 1) return;
+    picked[name] = qty;
+    const el = pickerOverlay.querySelector(`[data-style-qty="${CSS.escape(name)}"]`);
+    if (el) el.textContent = qty;
+    refreshConfirmBtn();
+  }
+
+  pickerOverlay.querySelectorAll('[data-style-check]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const name = cb.dataset.styleCheck;
+      if (cb.checked) {
+        picked[name] = picked[name] || 1;
+      } else {
+        delete picked[name];
+        const el = pickerOverlay.querySelector(`[data-style-qty="${CSS.escape(name)}"]`);
+        if (el) el.textContent = '1';
+      }
+      refreshConfirmBtn();
     });
   });
+
+  // 按數量的 +/− 時，如果這一款還沒勾，就自動幫它勾起來（少按一次）
+  pickerOverlay.querySelectorAll('[data-style-plus]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.stylePlus;
+      const cb = pickerOverlay.querySelector(`[data-style-check="${CSS.escape(name)}"]`);
+      if (cb && !cb.checked) { cb.checked = true; picked[name] = 1; }
+      setQty(name, (picked[name] || 1) + 1);
+    });
+  });
+  pickerOverlay.querySelectorAll('[data-style-minus]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.styleMinus;
+      if (!picked[name]) return;
+      setQty(name, picked[name] - 1);
+    });
+  });
+
+  document.getElementById('styleSelectAllBtn').addEventListener('click', () => {
+    const selectAll = Object.keys(picked).length !== styles.length;
+    styles.forEach(s => {
+      const cb = pickerOverlay.querySelector(`[data-style-check="${CSS.escape(s.name)}"]`);
+      if (cb) cb.checked = selectAll;
+      if (selectAll) picked[s.name] = picked[s.name] || 1;
+      else delete picked[s.name];
+    });
+    refreshConfirmBtn();
+  });
+
+  confirmBtn.addEventListener('click', () => {
+    const entries = Object.entries(picked);
+    if (entries.length === 0) return;
+    // 照款式原本的順序加入，訂單裡的排列才跟商品設定一致，不會依點選先後亂跳
+    const splitStyles = [];
+    styles.forEach(s => {
+      const qty = picked[s.name];
+      if (!qty) return;
+      const r = addItemToEditOrder(product, s.name, qty);
+      if (r.splitFromOldPrice) splitStyles.push(s.name);
+    });
+    const totalQty = entries.reduce((sum, [, q]) => sum + q, 0);
+    pickerOverlay.remove();
+
+    // 有款式因為「訂單裡已有同款但價格不同」而另外開一行時，一起講清楚，不要跳一串提示
+    if (splitStyles.length > 0) {
+      showToast(`已加入 ${entries.length} 款、共 ${totalQty} 件（${splitStyles.join('、')} 原本單價不同，已另外列一行）`);
+    } else {
+      showToast(`已加入 ${entries.length} 款、共 ${totalQty} 件`);
+    }
+  });
+
   document.getElementById('closeStylePickModal').addEventListener('click', () => pickerOverlay.remove());
+  refreshConfirmBtn();
 }
 
-function addItemToEditOrder(product, style) {
+// qty：一次要加幾件（複選款式時會直接帶數量進來，不用重複呼叫）
+// 回傳 { splitFromOldPrice }：這次有沒有因為價格不同而另外開一行，交給呼叫端決定要不要提示，
+// 這樣複選加入好幾款時才能彙整成一則訊息，不會跳出一整串提示洗版
+function addItemToEditOrder(product, style, qty = 1) {
   // 用「商品目前的價格」加進訂單（有特價就用特價）
   const price = getEffectivePrice(product, style).price;
 
@@ -1339,30 +1469,30 @@ function addItemToEditOrder(product, style) {
     Number(i.price) === Number(price)
   );
 
+  let splitFromOldPrice = false;
+
   if (existing) {
-    existing.qty += 1;
+    existing.qty += qty;
   } else {
     editOrderState.items.push({
       productId: product.id,
       name: product.name,
       style: style || '',
-      qty: 1,
+      qty,
       price,
       image: (product.images && product.images[0]) || '',
       stockType: getStyleStockType(product, style),
       deliveryMethod: product.deliveryMethod === 'homeDelivery' ? 'homeDelivery' : 'cvs'
     });
 
-    // 同一個商品款式已經在訂單裡、但價格不同時，提醒一下為什麼會多出一行，避免你以為系統重複加了
-    const sameProductDifferentPrice = editOrderState.items.some(i =>
+    // 同一個商品款式已經在訂單裡、但價格不同時，要讓你知道為什麼會多出一行，避免以為系統重複加了
+    splitFromOldPrice = editOrderState.items.some(i =>
       i.productId === product.id && (i.style || '') === (style || '') && Number(i.price) !== Number(price)
     );
-    if (sameProductDifferentPrice) {
-      showToast(`「${product.name}」原本的單價不同，已另外新增一行（目前單價 ${formatPrice(price)}）`);
-    }
   }
   renderEditOrderItems();
   updateEditOrderSummary();
+  return { splitFromOldPrice, price };
 }
 
 async function saveEditedOrder() {
