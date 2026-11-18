@@ -1955,7 +1955,10 @@ async function doMergeOrders() {
 //
 // 版面規格（直接取自範本與巨集原始碼）：
 //   第 6 列是標題列、第 7 列起是資料、A~J 共 10 欄、第 K 欄是巨集回寫的驗證結果，不能動
-const SHOPEE_TEMPLATE_URL = 'assets/shopee-import-template.xlsm'; // 檔名用英數，避免中文檔名在網址上出問題
+// 檔名用英數（避免中文檔名在網址上出問題），結尾帶範本版本號：
+// 賣貨便更新範本時就換一個新檔名，瀏覽器一定會抓到新的，不會拿到快取裡的舊範本。
+// 目前對應賣貨便範本 v1.6
+const SHOPEE_TEMPLATE_URL = 'assets/shopee-import-template-v16.xlsm';
 const SHOPEE_SHEET_PATH = 'xl/worksheets/sheet1.xml'; // 工作表「訂單匯入」
 const SHOPEE_FIRST_DATA_ROW = 7;
 const SHOPEE_MAX_ROWS = 500;      // 巨集：超過 500 筆會擋下來
@@ -1986,12 +1989,9 @@ function buildShopeeRow(order) {
 // ---- 以下驗證規則逐條對應賣貨便範本裡那支驗證巨集，數字與訊息都照搬 ----
 // 目的是「上傳前就知道哪一筆會被退」，而不是上傳被打回來再一筆筆找
 
-// 巨集用 LenB(StrConv(s, vbFromUnicode)) 算長度：中文字算 2、英數算 1
-function shopeeByteLen(str) {
-  let n = 0;
-  for (const ch of String(str)) n += ch.charCodeAt(0) > 255 ? 2 : 1;
-  return n;
-}
+// 範本 v1.6 起，取件人姓名的長度限制從「10 個位元組（5 個中文字）」放寬成「50 個字」，
+// 而且改用一般的字數計算（Len），中文字也算 1 個字。這裡跟著改，才不會誤擋可以上傳的訂單。
+const SHOPEE_NAME_MAX_LEN = 50;
 
 // 姓名禁用字元（含全形數字），跟巨集的正規表示式一致
 const SHOPEE_NAME_BANNED = /[\d０-９`~!@#$%&*()/\\|,.<>?();:_+\-=\[\]{}"'^]/;
@@ -2002,7 +2002,7 @@ function validateShopeeRow(row) {
 
   if (!name) errs.push('取件人姓名未填');
   else if (name.length < 2) errs.push('取件人姓名不可少於2個字');
-  else if (shopeeByteLen(name) > 10) errs.push('取件人姓名不可超過10個字(5個中文字)');
+  else if (name.length > SHOPEE_NAME_MAX_LEN) errs.push(`取件人姓名不可超過${SHOPEE_NAME_MAX_LEN}個字`);
   else if (SHOPEE_NAME_BANNED.test(name)) errs.push('取件人姓名含禁用字元（數字或特殊符號）');
 
   if (!phone) errs.push('取件人手機未填');
